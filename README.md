@@ -8,3 +8,11 @@ resources:
 - https://sign.mt/
 - https://github.com/sign/translate
 - https://github.com/BenSaunders27/ProgressiveTransformersSLP
+
+Image/Video Recognition:
+- https://github.com/dxli94/WLASL
+- https://github.com/SomyanshAvasthi/Sign-Language-Detection-using-MediaPipe
+- https://github.com/alanjeremiah/WLASL-Recognition-and-Translation
+- https://github.com/laplaces42/sign-language-interpreter
+- https://github.com/DEV-D-GR8/SignSense?tab=readme-ov-file
+- https://github.com/sidharth3/sign-language-recognition
