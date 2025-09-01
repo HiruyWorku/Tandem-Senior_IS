@@ -6,3 +6,5 @@ resources:
 - http://dai.cs.rutgers.edu/dai/s/signbank
 - https://www.kaggle.com/datasets/risangbaskoro/wlasl-processed
 - https://sign.mt/
+- https://github.com/sign/translate
+- https://github.com/BenSaunders27/ProgressiveTransformersSLP
