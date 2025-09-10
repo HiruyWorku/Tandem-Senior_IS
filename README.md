@@ -1,5 +1,7 @@
 # Tandem-Senior_IS.
 resources:
+
+Avatar:
 - https://github.com/aws-samples/genai-asl-avatar-generator
 - https://github.com/ZhengdiYu/SignAvatars
 - https://research.sign.mt/
@@ -16,3 +18,6 @@ Image/Video Recognition:
 - https://github.com/laplaces42/sign-language-interpreter
 - https://github.com/DEV-D-GR8/SignSense?tab=readme-ov-file
 - https://github.com/sidharth3/sign-language-recognition
+
+Videocall app:
+- https://getstream.io/video/sdk/react/tutorial/video-calling/
