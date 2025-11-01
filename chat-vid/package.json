@@ -1,0 +1,16 @@
+{
+  "name": "webrtc-1to1",
+  "version": "1.0.0",
+  "description": "Simple 1:1 WebRTC video conferencing app with Express and Socket.IO signaling",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js"
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "socket.io": "^4.7.5"
+  }
+}
