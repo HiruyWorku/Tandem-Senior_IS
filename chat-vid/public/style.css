@@ -40,6 +40,10 @@ body {
   border: 1px solid #1f2a37;
   border-radius: 8px;
   padding: 8px;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+  height: 100%;
 }
 
 .video-container h2 {
@@ -53,6 +57,93 @@ video {
   height: auto;
   background: #000;
   border-radius: 6px;
+  flex-grow: 1;
+}
+
+.captions-container {
+  margin-top: 8px;
+  min-height: 40px;
+  background: rgba(0, 0, 0, 0.7);
+  border-radius: 6px;
+  padding: 8px;
+  color: white;
+  font-size: 16px;
+  line-height: 1.4;
+  overflow-y: auto;
+  max-height: 100px;
+}
+
+.captions {
+  word-break: break-word;
+}
+
+/* Style for the local user's captions */
+#localCaptions {
+  color: #4ade80; /* Green color for local user's text */
+}
+
+/* Style for the remote user's captions */
+#remoteCaptions {
+  color: #60a5fa; /* Blue color for remote user's text */
+}
+
+/* Controls */
+.controls {
+  display: flex;
+  justify-content: center;
+  gap: 16px;
+  padding: 12px;
+  background: var(--panel);
+  border-bottom: 1px solid #1f2a37;
+}
+
+.control-button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: #1f2a37;
+  color: var(--text);
+  border: none;
+  border-radius: 20px;
+  cursor: pointer;
+  font-size: 14px;
+  transition: all 0.2s ease;
+}
+
+.control-button:hover {
+  background: #2c3a4b;
+}
+
+.control-button:active {
+  transform: scale(0.95);
+}
+
+.control-button .icon {
+  font-size: 16px;
+}
+
+/* Disabled states */
+.control-button.mic-off {
+  background: #4a1c1c;
+}
+
+.control-button.camera-off {
+  background: #4a1c1c;
+}
+
+.control-button.mic-off .text::after {
+  content: 'd';
+  text-decoration: line-through;
+  opacity: 0.7;
+}
+
+.control-button.camera-off .text::after {
+  content: 'Off';
+}
+
+.control-button.camera-on .text::after {
+  content: 'On';
 }
 
 @media (max-width: 900px) {
