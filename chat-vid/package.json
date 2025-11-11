@@ -10,7 +10,8 @@
   "author": "",
   "license": "MIT",
   "dependencies": {
-    "express": "^4.19.2",
-    "socket.io": "^4.7.5"
+    "@google-cloud/speech": "^7.2.1",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
   }
 }
