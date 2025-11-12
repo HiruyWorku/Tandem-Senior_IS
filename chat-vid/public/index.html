@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>WebRTC 1:1 Call</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/avatar.css" />
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>WebRTC 1:1</h1>
+      <div class="status">
+        <span id="status-text">Initializing…</span>
+      </div>
+    </header>
+
+    <div class="controls">
+      <button id="toggleMic" class="control-button mic-on" title="Mute/Unmute Microphone">
+        <span class="icon">🎤</span>
+        <span class="text">Unmute</span>
+      </button>
+      <button id="toggleCamera" class="control-button camera-on" title="Turn Camera On/Off">
+        <span class="icon">🎥</span>
+        <span class="text">Camera </span>
+      </button>
+    </div>
+
+    <main class="videos">
+      <section class="video-container">
+        <h2>Local</h2>
+        <!-- Muted local video prevents echo/feedback on the same device. -->
+        <video id="localVideo" autoplay playsinline muted></video>
+        <div class="captions-container">
+          <div id="localCaptions" class="captions"></div>
+        </div>
+      </section>
+      <section class="video-container">
+        <h2>Remote</h2>
+        <video id="remoteVideo" autoplay playsinline></video>
+        <div class="captions-container">
+          <div id="remoteCaptions" class="captions"></div>
+        </div>
+      </section>
+    </main>
+
+    <!-- Signing Avatar Panel -->
+    <div id="avatar-panel"></div>
+
+    <!-- Avatar module -->
+    <script src="/avatar.js" type="module"></script>
+
+    <!-- Socket.IO client served by the server automatically at /socket.io/socket.io.js -->
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/script.js" type="module"></script>
+  </body>
+  </html>
+
