@@ -1,5 +1,5 @@
 # Tandem-Senior_IS.
-resources:
+resources
 
 Avatar:
 - https://github.com/aws-samples/genai-asl-avatar-generator
