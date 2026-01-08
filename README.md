@@ -1,4 +1,4 @@
-# Tandem-Senior_IS.
+# Tandem-Senior_IS
 resources
 
 Avatar:
