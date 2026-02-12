@@ -39,7 +39,7 @@ function setupDataChannel(channel) {
         // Drive signing avatar for remote captions arriving via data channel
         try {
           if (window && window.avatar && typeof window.avatar.setText === 'function') {
-            window.avatar.setText(data.text, 'en', 'ase');
+            window.avatar.setText(data.text, 'en', 'ase');  //this were the text data is sent to the avatar
           }
         } catch (e) {
           console.warn('Avatar update (data channel) failed:', e);
@@ -79,7 +79,7 @@ function updateTranscript(transcript, isFinal = true, isLocal = true) {
   // Update the last transcript time
   lastTranscriptUpdate = Date.now();
   
-  // If this is a local transcript, send it over the data channel
+  // If this is a local transcript, send it over the data channel so there avatar can sign what is said 
   if (isLocal && dataChannel && dataChannel.readyState === 'open') {
     try {
       dataChannel.send(JSON.stringify({

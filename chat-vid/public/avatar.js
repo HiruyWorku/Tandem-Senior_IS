@@ -65,6 +65,9 @@
   const spokenEl = container.querySelector('#avatar-spoken');
   const signedEl = container.querySelector('#avatar-signed');
 
+  // default playback for pose-viewer
+  const DEFAULT_PLAYBACK_RATE = 3.0;
+
   function setStatus(msg, isError = false) {
     if (!statusEl) return;
     statusEl.textContent = msg || '';
@@ -89,7 +92,16 @@
       try {
         setStatus('Rendering avatar…');
         const src = buildLocalPoseUrl(trimmed, spoken, signed);
-        if (viewer) viewer.setAttribute('src', src);
+        if (viewer){
+          viewer.setAttribute('src', src);
+          // apply playbackRate after updating src: set both attribute and property
+          try {
+            viewer.setAttribute('playbackRate', String(DEFAULT_PLAYBACK_RATE));
+            if (typeof viewer.playbackRate !== 'undefined') viewer.playbackRate = DEFAULT_PLAYBACK_RATE;
+          } catch (e) {
+            // ignore if unsupported
+          }
+        }
       } catch (e) {
         console.error(e);
         setStatus('Failed to render.', true);
@@ -97,7 +109,7 @@
     }, 400);
   }
 
-  // Public API
+
   window.avatar = {
     setText, // window.avatar.setText(transcript, 'en', 'ase')
     setSpoken: (v) => (spokenEl.value = v || 'en'),
@@ -106,13 +118,18 @@
     getSigned: () => signedEl.value,
   };
 
-  // Optional: listen to first render for fps/duration if you need queuing UX
+  // listen to first render for fps/duration if you need queuing UX
   if (viewer) {
     viewer.addEventListener('firstRender$', async () => {
       try {
         const pose = await viewer.getPose();
         void pose;
       } catch {}
+      try {
+        viewer.setAttribute('playbackRate', String(DEFAULT_PLAYBACK_RATE));
+        if (typeof viewer.playbackRate !== 'undefined') viewer.playbackRate = DEFAULT_PLAYBACK_RATE;
+      } catch (e) {
+      }
     });
   }
 
