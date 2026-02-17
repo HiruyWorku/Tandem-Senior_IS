@@ -1,0 +1,20 @@
+{
+  "name": "tandem-app",
+  "version": "1.0.0",
+  "description": "Unified video conferencing app connecting deaf and hearing users with ASL recognition",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "asl": "python asl_server.py",
+    "start:all": "concurrently \"npm start\" \"npm run asl\""
+  },
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "@google-cloud/speech": "^7.2.1",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1",
+    "concurrently": "^8.2.0"
+  }
+}

@@ -1,0 +1,7 @@
+opencv-python
+mediapipe
+scikit-learn==1.2.0
+flask
+flask-sockets
+gevent
+gevent-websocket

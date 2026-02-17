@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tandem - Deaf User</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/avatar.css" />
+    <style>
+      .deaf-layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: auto 1fr auto;
+        gap: 15px;
+        height: calc(100vh - 120px);
+        padding: 15px;
+      }
+
+      .deaf-layout header {
+        grid-column: 1 / -1;
+      }
+
+      .video-section {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .asl-section {
+        background: rgba(78, 204, 163, 0.1);
+        border: 2px solid #4ecca3;
+        border-radius: 15px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .asl-section h3 {
+        color: #4ecca3;
+        margin-bottom: 10px;
+        font-size: 1rem;
+      }
+
+      .asl-video-container {
+        position: relative;
+        flex: 1;
+        min-height: 280px;
+        background: #000;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .asl-video-container video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .asl-prediction {
+        position: absolute;
+        top: 10px;
+        left: 10px;
+        background: rgba(0, 0, 0, 0.7);
+        color: #4ecca3;
+        padding: 8px 15px;
+        border-radius: 20px;
+        font-size: 1.2rem;
+        font-weight: bold;
+      }
+
+      .remote-section {
+        background: rgba(233, 69, 96, 0.1);
+        border: 2px solid #e94560;
+        border-radius: 15px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .remote-section h3 {
+        color: #e94560;
+        margin-bottom: 10px;
+        font-size: 1rem;
+      }
+
+      .remote-video-container {
+        position: relative;
+        flex: 1;
+        min-height: 200px;
+        background: #000;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .remote-video-container video {
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+      }
+
+      .avatar-container {
+        flex: 1;
+        min-height: 200px;
+      }
+
+      .status-bar {
+        grid-column: 1 / -1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 20px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+      }
+
+      .user-badge {
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 0.9rem;
+      }
+
+      .deaf-badge {
+        background: #4ecca3;
+        color: #1a1a2e;
+      }
+
+      .asl-status {
+        color: #4ecca3;
+      }
+
+      .asl-history {
+        background: rgba(0, 0, 0, 0.5);
+        border-radius: 10px;
+        padding: 10px;
+        max-height: 60px;
+        overflow-y: auto;
+        margin-top: 10px;
+      }
+
+      .asl-history p {
+        color: #4ecca3;
+        font-size: 0.9rem;
+        margin: 3px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Tandem - Deaf User</h1>
+      <div class="status">
+        <span id="status-text">Initializing…</span>
+      </div>
+    </header>
+
+    <div class="controls">
+      <button id="toggleMic" class="control-button mic-on" title="Mute/Unmute Microphone">
+        <span class="icon">🎤</span>
+        <span class="text">Unmute</span>
+      </button>
+      <button id="toggleCamera" class="control-button camera-on" title="Turn Camera On/Off">
+        <span class="icon">🎥</span>
+        <span class="text">Camera</span>
+      </button>
+    </div>
+
+    <main class="deaf-layout">
+      <section class="video-section">
+        <div class="asl-section">
+          <h3>Your Signs (ASL Recognition)</h3>
+          <div class="asl-video-container">
+            <video id="aslVideo" autoplay playsinline muted></video>
+            <div id="aslPrediction" class="asl-prediction">Waiting...</div>
+          </div>
+          <div class="asl-history">
+            <div id="aslHistory"></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="video-section">
+        <div class="remote-section">
+          <h3>Remote User</h3>
+          <div class="remote-video-container">
+            <video id="remoteVideo" autoplay playsinline></video>
+          </div>
+        </div>
+      </section>
+
+      <div class="avatar-container">
+        <div id="avatar-panel"></div>
+      </div>
+
+      <div class="status-bar">
+        <span class="user-badge deaf-badge">You are joining as: Deaf User</span>
+        <span id="aslStatus" class="asl-status">ASL Recognition: Loading model...</span>
+      </div>
+    </main>
+
+    <video id="localVideo" autoplay playsinline muted style="display: none;"></video>
+
+    <script src="/avatar.js" type="module"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/script.js" type="module"></script>
+    <script src="/deaf.js" type="module"></script>
+  </body>
+</html>
