@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tandem - Hearing User</title>
+    <link rel="stylesheet" href="/style.css" />
+    <link rel="stylesheet" href="/avatar.css" />
+    <style>
+      .hearing-layout {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        grid-template-rows: auto 1fr auto;
+        gap: 15px;
+        height: calc(100vh - 120px);
+        padding: 15px;
+      }
+
+      .hearing-layout header {
+        grid-column: 1 / -1;
+      }
+
+      .video-section {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .local-section {
+        background: rgba(233, 69, 96, 0.1);
+        border: 2px solid #e94560;
+        border-radius: 15px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .local-section h3 {
+        color: #e94560;
+        margin-bottom: 10px;
+        font-size: 1rem;
+      }
+
+      .remote-section {
+        background: rgba(78, 204, 163, 0.1);
+        border: 2px solid #4ecca3;
+        border-radius: 15px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .remote-section h3 {
+        color: #4ecca3;
+        margin-bottom: 10px;
+        font-size: 1rem;
+      }
+
+      .video-container {
+        position: relative;
+        flex: 1;
+        min-height: 200px;
+        background: #000;
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .captions-container {
+        position: absolute;
+        bottom: 10px;
+        left: 10px;
+        right: 10px;
+        background: rgba(0, 0, 0, 0.7);
+        border-radius: 10px;
+        padding: 10px;
+      }
+
+      .captions {
+        color: #fff;
+        font-size: 1rem;
+        text-align: center;
+      }
+
+      .avatar-container {
+        flex: 1;
+        min-height: 200px;
+      }
+
+      .asl-display {
+        background: rgba(78, 204, 163, 0.1);
+        border: 2px solid #4ecca3;
+        border-radius: 15px;
+        padding: 10px;
+        display: flex;
+        flex-direction: column;
+      }
+
+      .asl-display h3 {
+        color: #4ecca3;
+        margin-bottom: 10px;
+        font-size: 1rem;
+      }
+
+      .asl-predictions {
+        flex: 1;
+        min-height: 150px;
+        background: rgba(0, 0, 0, 0.3);
+        border-radius: 10px;
+        padding: 10px;
+        overflow-y: auto;
+      }
+
+      .asl-predictions p {
+        color: #4ecca3;
+        font-size: 1.1rem;
+        margin: 5px 0;
+        padding: 5px 10px;
+        background: rgba(78, 204, 163, 0.1);
+        border-radius: 5px;
+      }
+
+      .status-bar {
+        grid-column: 1 / -1;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        padding: 10px 20px;
+        background: rgba(255, 255, 255, 0.05);
+        border-radius: 10px;
+      }
+
+      .user-badge {
+        padding: 5px 15px;
+        border-radius: 20px;
+        font-size: 0.9rem;
+      }
+
+      .hearing-badge {
+        background: #e94560;
+        color: #fff;
+      }
+    </style>
+  </head>
+  <body>
+    <header class="app-header">
+      <h1>Tandem - Hearing User</h1>
+      <div class="status">
+        <span id="status-text">Initializing…</span>
+      </div>
+    </header>
+
+    <div class="controls">
+      <button id="toggleMic" class="control-button mic-on" title="Mute/Unmute Microphone">
+        <span class="icon">🎤</span>
+        <span class="text">Unmute</span>
+      </button>
+      <button id="toggleCamera" class="control-button camera-on" title="Turn Camera On/Off">
+        <span class="icon">🎥</span>
+        <span class="text">Camera</span>
+      </button>
+    </div>
+
+    <main class="hearing-layout">
+      <section class="video-section">
+        <div class="local-section">
+          <h3>You</h3>
+          <div class="video-container">
+            <video id="localVideo" autoplay playsinline muted></video>
+            <div class="captions-container">
+              <div id="localCaptions" class="captions"></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="video-section">
+        <div class="remote-section">
+          <h3>Remote User (Deaf)</h3>
+          <div class="video-container">
+            <video id="remoteVideo" autoplay playsinline></video>
+          </div>
+        </div>
+      </section>
+
+      <div class="asl-display">
+        <h3>ASL Signs from Remote User</h3>
+        <div class="asl-predictions">
+          <div id="aslPredictionsList"></div>
+        </div>
+      </div>
+
+      <div class="avatar-container">
+        <div id="avatar-panel"></div>
+      </div>
+
+      <div class="status-bar">
+        <span class="user-badge hearing-badge">You are joining as: Hearing User</span>
+        <span>Speak normally - your words will be signed by the avatar</span>
+      </div>
+    </main>
+
+    <script src="/avatar.js" type="module"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="/script.js" type="module"></script>
+    <script src="/hearing.js" type="module"></script>
+  </body>
+</html>
