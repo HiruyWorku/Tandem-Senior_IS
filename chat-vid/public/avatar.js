@@ -118,7 +118,7 @@
     getSigned: () => signedEl.value,
   };
 
-  // listen to first render for fps/duration if you need queuing UX
+  // listen to first render for fps/duration 
   if (viewer) {
     viewer.addEventListener('firstRender$', async () => {
       try {
