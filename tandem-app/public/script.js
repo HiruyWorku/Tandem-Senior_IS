@@ -20,14 +20,16 @@ function setupDataChannel(channel) {
   channel.onopen = () => {
     console.log('Data channel is open and ready');
   };
-  
+
   channel.onmessage = (event) => {
     try {
       const data = JSON.parse(event.data);
       if (data.type === 'transcript') {
         updateTranscript(data.text, data.isFinal, false);
-        if (window && window.avatar && typeof window.avatar.setText === 'function') {
-          window.avatar.setText(data.text, 'en', 'ase');
+        // Only send FINAL transcripts to the avatar so an in-progress signing
+        // animation is never preempted by an interim (partial) result.
+        if (data.isFinal && window && window.avatar && typeof window.avatar.enqueue === 'function') {
+          window.avatar.enqueue(data.text, 'en', 'ase');
         }
       }
       if (data.type === 'aslPrediction') {
@@ -39,32 +41,32 @@ function setupDataChannel(channel) {
       console.error('Error parsing data channel message:', err);
     }
   };
-  
+
   channel.onclose = () => {
-    console.log('Data channel closed');  
+    console.log('Data channel closed');
   };
-  
+
   channel.onerror = (error) => {
     console.error('Data channel error:', error);
   };
 }
 
 function updateTranscript(transcript, isFinal = true, isLocal = true) {
-  const captionsEl = isLocal 
+  const captionsEl = isLocal
     ? document.getElementById('localCaptions')
     : document.getElementById('remoteCaptions');
-    
+
   if (!captionsEl) return;
-  
+
   captionsEl.textContent = transcript;
-  
+
   const container = captionsEl.closest('.captions-container');
   if (container) {
     container.style.display = 'block';
   }
-  
+
   lastTranscriptUpdate = Date.now();
-  
+
   if (isLocal && dataChannel && dataChannel.readyState === 'open') {
     try {
       dataChannel.send(JSON.stringify({
@@ -76,7 +78,7 @@ function updateTranscript(transcript, isFinal = true, isLocal = true) {
       console.error('Error sending caption:', err);
     }
   }
-  
+
   clearTimeout(window.transcriptTimeout);
   window.transcriptTimeout = setTimeout(() => {
     if (Date.now() - lastTranscriptUpdate >= TRANSCRIPT_TIMEOUT) {
@@ -93,7 +95,7 @@ let isCameraOn = true;
 
 let ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
-  { 
+  {
     urls: [
       'turn:34.41.176.41:3478?transport=udp',
       'turn:34.41.176.41:3478?transport=tcp'
@@ -135,24 +137,24 @@ function setStatus(text) {
 async function initMedia() {
   try {
     console.log('[client] requesting getUserMedia');
-    localStream = await navigator.mediaDevices.getUserMedia({ 
-      video: true, 
+    localStream = await navigator.mediaDevices.getUserMedia({
+      video: true,
       audio: {
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true
-      } 
+      }
     });
-    
+
     console.log('[client] got localStream', {
       audio: localStream.getAudioTracks().map((t) => ({ id: t.id, enabled: t.enabled })),
       video: localStream.getVideoTracks().map((t) => ({ id: t.id, enabled: t.enabled }))
     });
-    
+
     if (localVideo) {
       localVideo.srcObject = localStream;
     }
-    
+
     await setupAudioProcessing(localStream);
     setupMediaControls();
   } catch (error) {
@@ -167,29 +169,29 @@ async function setupAudioProcessing(stream) {
       console.log('Audio processing already initialized for this stream');
       return true;
     }
-    
+
     console.log('Setting up audio processing...');
     await cleanupAudioProcessing();
     audioStream = stream;
-    
+
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     audioContext = new AudioContext();
     sourceNode = audioContext.createMediaStreamSource(stream);
     processorNode = audioContext.createScriptProcessor(4096, 1, 1);
-    
+
     processorNode.onaudioprocess = (event) => {
       if (!isProcessingAudio || !socket || !socket.connected) return;
-      
+
       try {
         const inputData = event.inputBuffer.getChannelData(0);
         if (!inputData || inputData.length === 0) return;
-        
+
         const output = new Int16Array(inputData.length);
         for (let i = 0; i < inputData.length; i++) {
           const s = Math.max(-1, Math.min(1, inputData[i]));
           output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
         }
-        
+
         if (socket && socket.connected) {
           socket.emit('audioData', {
             buffer: Array.from(output),
@@ -201,14 +203,14 @@ async function setupAudioProcessing(stream) {
         console.error('Error processing audio:', error);
       }
     };
-    
+
     sourceNode.connect(processorNode);
     processorNode.connect(audioContext.destination);
-    
+
     audioProcessingInitialized = true;
     isProcessingAudio = true;
     console.log('Audio processing started');
-    
+
     return true;
   } catch (error) {
     console.error('Error setting up audio processing:', error);
@@ -219,7 +221,7 @@ async function setupAudioProcessing(stream) {
 async function cleanupAudioProcessing() {
   isProcessingAudio = false;
   audioProcessingInitialized = false;
-  
+
   if (processorNode) {
     try {
       if (sourceNode) sourceNode.disconnect();
@@ -230,7 +232,7 @@ async function cleanupAudioProcessing() {
     }
     processorNode = null;
   }
-  
+
   if (audioContext && audioContext.state !== 'closed') {
     try {
       await audioContext.close();
@@ -239,7 +241,7 @@ async function cleanupAudioProcessing() {
     }
     audioContext = null;
   }
-  
+
   if (audioStream) {
     audioStream.getTracks().forEach(track => {
       try {
@@ -250,13 +252,13 @@ async function cleanupAudioProcessing() {
     });
     audioStream = null;
   }
-  
+
   sourceNode = null;
 }
 
 async function createPeerConnection() {
   console.log('[client] creating RTCPeerConnection');
-  
+
   try {
     const res = await fetch('/ice-config', { cache: 'no-store' });
     if (res.ok) {
@@ -268,9 +270,9 @@ async function createPeerConnection() {
   } catch (err) {
     console.warn('[client] Error fetching ICE config, using defaults', err);
   }
-  
+
   console.log('[client] Using ICE servers:', ICE_SERVERS);
-  
+
   const config = {
     iceServers: ICE_SERVERS,
     iceTransportPolicy: 'all',
@@ -278,9 +280,9 @@ async function createPeerConnection() {
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require'
   };
-  
+
   pc = new RTCPeerConnection(config);
-  
+
   try {
     dataChannel = pc.createDataChannel('captions');
     setupDataChannel(dataChannel);
@@ -288,7 +290,7 @@ async function createPeerConnection() {
   } catch (err) {
     console.error('Error creating data channel:', err);
   }
-  
+
   pc.ondatachannel = (event) => {
     if (event.channel.label === 'captions') {
       dataChannel = event.channel;
@@ -296,14 +298,14 @@ async function createPeerConnection() {
       console.log('Received remote data channel for captions');
     }
   };
-  
+
   pc.onconnectionstatechange = () => {
     console.log(`[client] connection state changed: ${pc.connectionState}`);
     setStatus(`Connection: ${pc.connectionState}`);
-    
-    if (pc.connectionState === 'disconnected' || 
-        pc.connectionState === 'failed' || 
-        pc.connectionState === 'closed') {
+
+    if (pc.connectionState === 'disconnected' ||
+      pc.connectionState === 'failed' ||
+      pc.connectionState === 'closed') {
       setTimeout(() => {
         if (pc.connectionState !== 'connected' && pc.connectionState !== 'connecting') {
           console.log('[client] Attempting to reconnect...');
@@ -312,7 +314,7 @@ async function createPeerConnection() {
       }, 2000);
     }
   };
-  
+
   console.log('[client] RTCPeerConnection created', pc);
 
   if (localStream) {
@@ -348,24 +350,27 @@ function initSocket(userType) {
   window.socket = socket;
   socket.on('connect', () => {
     console.log('[client] socket connected', socket.id);
-    
+
     if (audioStream && !isProcessingAudio) {
       isProcessingAudio = true;
     }
-    
+
     socket.emit('join', userType);
   });
-  
+
   socket.on('transcript', (data) => {
     console.log('[client] received transcript:', data);
     if (data.transcript) {
       updateTranscript(data.transcript, data.isFinal, data.isLocal);
+      // Avatar only gets queued on final results — never on interim partials.
+      // This prevents a new sentence from interrupting the avatar mid-sign.
       try {
-        if (data.isLocal === false && window && window.avatar && typeof window.avatar.setText === 'function') {
-          window.avatar.setText(data.transcript, 'en', 'ase');
+        if (data.isFinal && data.isLocal === false &&
+          window && window.avatar && typeof window.avatar.enqueue === 'function') {
+          window.avatar.enqueue(data.transcript, 'en', 'ase');
         }
       } catch (e) {
-        console.warn('Avatar update failed:', e);
+        console.warn('Avatar enqueue failed:', e);
       }
     }
   });
@@ -387,7 +392,19 @@ function initSocket(userType) {
     }
   });
 
-  socket.emit('join', userType);
+  // Receive synthesized TTS audio from the server and play it.
+  socket.on('ttsAudio', (data) => {
+    if (data && data.audioBase64) {
+      playTTSAudio(data.audioBase64).catch(err =>
+        console.error('[TTS] playback error:', err)
+      );
+    }
+  });
+
+  // The deaf peer's avatar finished signing — show confirmation to the hearing user.
+  socket.on('signingDone', () => {
+    showSigningDoneToast();
+  });
 
   socket.on('joined', ({ room, peers }) => {
     setStatus(`Joined room: ${room}. Peers: ${peers}`);
@@ -476,12 +493,12 @@ async function makeOffer() {
 
 function toggleMic() {
   if (!localStream) return;
-  
+
   const audioTracks = localStream.getAudioTracks();
   if (audioTracks.length > 0) {
     isMicOn = !isMicOn;
     audioTracks[0].enabled = isMicOn;
-    
+
     if (isMicOn) {
       toggleMicBtn.classList.remove('mic-off');
       toggleMicBtn.classList.add('mic-on');
@@ -491,19 +508,19 @@ function toggleMic() {
       toggleMicBtn.classList.add('mic-off');
       toggleMicBtn.querySelector('.text').textContent = 'Mute';
     }
-    
+
     console.log(`[client] Microphone ${isMicOn ? 'unmuted' : 'muted'}`);
   }
 }
 
 function toggleCamera() {
   if (!localStream) return;
-  
+
   const videoTracks = localStream.getVideoTracks();
   if (videoTracks.length > 0) {
     isCameraOn = !isCameraOn;
     videoTracks[0].enabled = isCameraOn;
-    
+
     if (isCameraOn) {
       toggleCameraBtn.classList.remove('camera-off');
       toggleCameraBtn.classList.add('camera-on');
@@ -513,19 +530,129 @@ function toggleCamera() {
       toggleCameraBtn.classList.add('camera-off');
       if (localVideo) localVideo.style.opacity = '0.5';
     }
-    
+
     console.log(`[client] Camera turned ${isCameraOn ? 'on' : 'off'}`);
   }
 }
 
 function setupMediaControls() {
   if (!toggleMicBtn || !toggleCameraBtn) return;
-  
+
   toggleMicBtn.classList.add('mic-on');
   toggleCameraBtn.classList.add('camera-on');
-  
+
   toggleMicBtn.addEventListener('click', toggleMic);
   toggleCameraBtn.addEventListener('click', toggleCamera);
+}
+
+// --- Text-to-Speech playback ---
+// Simple sequential queue: waits for the current audio to finish before playing the next.
+let _ttsChain = Promise.resolve();
+
+/**
+ * showPillToast — reusable pill toast injected into the DOM.
+ * Uses a module-level timer map so clearTimeout always gets the right handle,
+ * and double-rAF so the browser always paints the hidden state before animating in.
+ */
+const _toastTimers = {};
+function showPillToast(id, message, color) {
+  let toast = document.getElementById(id);
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = id;
+    Object.assign(toast.style, {
+      position: 'fixed',
+      bottom: '28px',
+      left: '50%',
+      transform: 'translateX(-50%) translateY(12px)',
+      background: 'rgba(10, 14, 30, 0.92)',
+      padding: '6px 18px',
+      borderRadius: '999px',
+      fontSize: '0.8rem',
+      fontWeight: '600',
+      letterSpacing: '0.04em',
+      opacity: '0',
+      transition: 'opacity 0.25s ease, transform 0.25s ease',
+      pointerEvents: 'none',
+      zIndex: '9999',
+      whiteSpace: 'nowrap',
+    });
+    document.body.appendChild(toast);
+  }
+
+  // Reset to hidden so the slide-in always replays, even on repeated calls.
+  toast.style.opacity = '0';
+  toast.style.transform = 'translateX(-50%) translateY(12px)';
+  toast.textContent = message;
+  toast.style.color = color;
+  toast.style.border = `1.5px solid ${color}`;
+  toast.style.boxShadow = `0 0 8px ${color}40`;
+
+  // Cancel any pending hide timer.
+  clearTimeout(_toastTimers[id]);
+
+  // Double-rAF: first frame commits the reset styles, second frame triggers
+  // the CSS transition into the visible state.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      toast.style.opacity = '1';
+      toast.style.transform = 'translateX(-50%) translateY(0)';
+
+      // Auto-hide after 2 s.
+      _toastTimers[id] = setTimeout(() => {
+        toast.style.opacity = '0';
+        toast.style.transform = 'translateX(-50%) translateY(10px)';
+      }, 2000);
+    });
+  });
+}
+
+/** Shown on the HEARING user's page when avatar finishes signing (teal). */
+function showSigningDoneToast() {
+  showPillToast('tandem-signing-toast', '✓ Done signing', '#4ecca3');
+}
+
+
+/**
+ * Decode a base64 MP3 string (sent from the server) and play it through the
+ * device speakers using the Web Audio API.
+ * @param {string} audioBase64 - Base64-encoded MP3 bytes
+ */
+async function playTTSAudio(audioBase64) {
+  _ttsChain = _ttsChain.then(async () => {
+    try {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const ctx = new AudioCtx();
+
+      // Decode base64 → ArrayBuffer
+      const binary = atob(audioBase64);
+      const bytes = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        bytes[i] = binary.charCodeAt(i);
+      }
+
+      // Decode MP3 → AudioBuffer → play
+      const buffer = await ctx.decodeAudioData(bytes.buffer);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+
+      await new Promise((resolve) => {
+        source.onended = resolve;
+        source.start(0);
+      });
+
+      // Notify the DEAF user (peer) that their sign has been fully spoken.
+      if (socket && socket.connected) {
+        socket.emit('ttsSpoken');
+      }
+
+      ctx.close();
+    } catch (err) {
+      console.error('[TTS] Audio playback failed:', err);
+    }
+  });
+  return _ttsChain;
 }
 
 window.TandemApp = {

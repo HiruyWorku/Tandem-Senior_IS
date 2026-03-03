@@ -1,199 +1,55 @@
-// deaf.js - Deaf user specific logic including ASL recognition (client-side)
-
-const ASL_LABELS = {
-  "dad": "dad", "mom": "mom", "boy": "boy", "girl": "girl", "baby": "baby",
-  "cold": "cold", "food": "food", "drink": "drink", "cup": "cup", "water": "water",
-  "cookie": "cookie", "shirt": "shirt", "mad": "mad", "sorry": "sorry", "love": "love",
-  "sad": "sad", "A": "A", "B": "B", "C": "C", "D": "D", "E": "E", "F": "F",
-  "G": "G", "H": "H", "I": "I", "K": "K", "L": "L", "M": "M", "N": "N",
-  "O": "O", "P": "P", "Q": "Q", "R": "R", "S": "S", "T": "T", "U": "U",
-  "V": "V", "W": "W", "X": "X", "Y": "Y", "3": "3", "5": "5", "6": "6",
-  "7": "7", "8": "8", "9": "9", "10": "10", "again": "again", "applause": "applause",
-  "full": "full", "help": "help", "no": "no", "learn": "learn", "money": "money",
-  "more": "more", "name": "name", "know": "know", "person": "person", "please": "please",
-  "short": "short", "stop": "stop", "tall": "tall", "teach": "teach", "thank you": "thank you",
-  "understand": "understand", "what": "what", "yellow": "yellow", "yes": "yes"
-};
+// deaf.js - ASL Recognition for Deaf User
 
 let lastASLPrediction = '';
-let aslHistory = [];
-const ASL_DEBOUNCE = 800;
-let aslProcessingInterval = null;
+const aslHistory = [];
+// Use a relative URL so requests go through the Node.js /api/predict proxy.
+// This avoids CORS and works regardless of where the app is deployed.
+const ASL_API_URL = '';
 
-async function initASLRecognition() {
-  const aslStatusEl = document.getElementById('aslStatus');
-  const aslVideo = document.getElementById('aslVideo');
-  
-  if (aslStatusEl) {
-    aslStatusEl.textContent = 'ASL Recognition: Loading MediaPipe...';
-  }
+console.log('Deaf user script loaded');
 
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ 
-      video: { width: 640, height: 480 } 
+/**
+ * showPillToast — reusable self-contained pill toast (no external CSS needed).
+ * The element is created once and reused on subsequent calls.
+ */
+function showPillToast(id, message, color) {
+  let toast = document.getElementById(id);
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = id;
+    Object.assign(toast.style, {
+      position: 'fixed',
+      bottom: '28px',
+      left: '50%',
+      transform: 'translateX(-50%) translateY(12px)',
+      background: 'rgba(10, 14, 30, 0.92)',
+      padding: '6px 18px',
+      borderRadius: '999px',
+      fontSize: '0.8rem',
+      fontWeight: '600',
+      letterSpacing: '0.04em',
+      opacity: '0',
+      transition: 'opacity 0.25s ease, transform 0.25s ease',
+      pointerEvents: 'none',
+      zIndex: '9999',
+      whiteSpace: 'nowrap',
     });
-    aslVideo.srcObject = stream;
-    await aslVideo.play();
-
-    await loadMediaPipe();
-    
-    if (aslStatusEl) {
-      aslStatusEl.textContent = 'ASL Recognition: Active';
-    }
-    
-    startASLProcessing();
-    
-  } catch (error) {
-    console.error('Failed to start ASL recognition:', error);
-    if (aslStatusEl) {
-      aslStatusEl.textContent = 'ASL Recognition: Error - ' + error.message;
-    }
+    document.body.appendChild(toast);
   }
-}
-
-async function loadMediaPipe() {
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.min.js';
-    script.onload = resolve;
-    script.onerror = reject;
-    document.head.appendChild(script);
+  toast.textContent = message;
+  toast.style.color = color;
+  toast.style.border = `1.5px solid ${color}`;
+  toast.style.boxShadow = `0 0 8px ${color}40`;
+  clearTimeout(toast._hide);
+  requestAnimationFrame(() => {
+    toast.style.opacity = '1';
+    toast.style.transform = 'translateX(-50%) translateY(0)';
   });
+  toast._hide = setTimeout(() => {
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(-50%) translateY(10px)';
+  }, 2000);
 }
-
-function startASLProcessing() {
-  const aslVideo = document.getElementById('aslVideo');
-  
-  const hands = new Hands({
-    locateFile: (file) => {
-      return `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`;
-    }
-  });
-
-  hands.setOptions({
-    maxNumHands: 1,
-    modelComplexity: 1,
-    minDetectionConfidence: 0.5,
-    minTrackingConfidence: 0.5
-  });
-
-  hands.onResults(onHandsResults);
-
-  aslProcessingInterval = setInterval(() => {
-    if (aslVideo.readyState >= 2) {
-      hands.send({ image: aslVideo });
-    }
-  }, 100);
-}
-
-function onHandsResults(results) {
-  if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
-    const landmarks = results.multiHandLandmarks[0];
-    
-    const data_aux = [];
-    const xCoords = landmarks.map(l => l.x);
-    const yCoords = landmarks.map(l => l.y);
-    
-    const minX = Math.min(...xCoords);
-    const minY = Math.min(...yCoords);
-    
-    for (let i = 0; i < landmarks.length; i++) {
-      data_aux.push(landmarks[i].x - minX);
-      data_aux.push(landmarks[i].y - minY);
-    }
-    
-    while (data_aux.length < 84) {
-      data_aux.push(0);
-    }
-    
-    predictASL(data_aux);
-  }
-}
-
-function predictASL(features) {
-  const mockPrediction = getHeuristicPrediction(features);
-  
-  if (mockPrediction) {
-    handleASLPrediction(mockPrediction);
-  }
-}
-
-function getHeuristicPrediction(features) {
-  const fingerTips = [4, 8, 12, 16, 20];
-  const fingerBases = [2, 5, 9, 13, 17];
-  
-  const fingers = [];
-  for (let i = 0; i < 5; i++) {
-    const tip = features[fingerTips[i] * 2];
-    const base = features[fingerBases[i] * 2];
-    fingers.push(tip < base ? 1 : 0);
-  }
-  
-  const [thumb, index, middle, ring, pinky] = fingers;
-  
-  if (!index && !middle && !ring && !pinky && thumb) return 'A';
-  if (index && middle && !ring && !pinky && !thumb) return 'V';
-  if (index && !middle && !ring && !pinky && !thumb) return 'I';
-  if (index && middle && ring && !pinky && !thumb) return 'Y';
-  if (!index && !middle && !ring && !pinky && !thumb) return 'O';
-  if (index && middle && ring && pinky && !thumb) return 'B';
-  if (index && middle && ring && pinky && thumb) return 'E';
-  if (!index && middle && ring && pinky && !thumb) return '3';
-  if (!thumb && index && !middle && !ring && !pinky) return 'L';
-  if (!thumb && index && !middle && !ring && pinky) return 'Y';
-  if (!index && !middle && !ring && pinky) return 'F';
-  
-  const avgX = features.slice(0, 42).reduce((a, b) => a + b, 0) / 42;
-  const spread = Math.max(...features.slice(0, 42)) - Math.min(...features.slice(0, 42));
-  
-  if (spread < 0.1) return 'O';
-  if (spread > 0.3 && thumb) return 'K';
-  
-  return null;
-}
-
-function handleASLPrediction(prediction) {
-  if (!prediction || prediction === lastASLPrediction) return;
-
-  const currentTime = Date.now();
-  if (aslHistory.length > 0) {
-    const lastTime = aslHistory[aslHistory.length - 1].time;
-    if (currentTime - lastTime < ASL_DEBOUNCE) {
-      return;
-    }
-  }
-
-  lastASLPrediction = prediction;
-
-  const predictionEl = document.getElementById('aslPrediction');
-  if (predictionEl) {
-    predictionEl.textContent = prediction;
-  }
-
-  aslHistory.push({ prediction, time: currentTime });
-  if (aslHistory.length > 20) {
-    aslHistory.shift();
-  }
-
-  updateASLHistory();
-
-  if (window.socket && window.socket.connected) {
-    window.socket.emit('aslPrediction', { prediction });
-  }
-}
-
-function updateASLHistory() {
-  const historyEl = document.getElementById('aslHistory');
-  if (!historyEl) return;
-
-  historyEl.innerHTML = aslHistory
-    .slice(-5)
-    .reverse()
-    .map(item => `<p>${item.prediction}</p>`)
-    .join('');
-}
-
-window.handleASLPrediction = handleASLPrediction;
 
 (async function init() {
   try {
@@ -209,11 +65,241 @@ window.handleASLPrediction = handleASLPrediction;
     window.TandemApp.setStatus('Connecting to signaling server…');
     window.TandemApp.initSocket('deaf');
 
-    await initASLRecognition();
+    window.TandemApp.setStatus('Waiting for peer…');
 
-    window.TandemApp.setStatus('Waiting for peer… Open this page on a second device.');
+    // Listen for the hearing user's TTS completion signal.
+    // When the hearing peer finishes speaking a sign aloud, notify the deaf user.
+    if (window.socket) {
+      window.socket.on('ttsSpoken', () => {
+        showPillToast('tandem-tts-toast', '🔊 Spoken', '#e9a84c');
+      });
+    } else {
+      // socket may not be ready yet — attach after initSocket sets window.socket
+      const waitForSocket = setInterval(() => {
+        if (window.socket) {
+          clearInterval(waitForSocket);
+          window.socket.on('ttsSpoken', () => {
+            showPillToast('tandem-tts-toast', '🔊 Spoken', '#e9a84c');
+          });
+        }
+      }, 100);
+    }
+
+    // Kick off ASL recognition using the same camera stream TandemApp acquired
+    initASL();
   } catch (err) {
     console.error(err);
     window.TandemApp.setStatus('Error initializing application. Check console.');
   }
 })();
+
+async function initASL() {
+  const aslStatus = document.getElementById('aslStatus');
+  const aslVideo = document.getElementById('aslVideo');
+  const localVideo = document.getElementById('localVideo');
+
+  console.log('Initializing ASL recognition...');
+  if (aslStatus) aslStatus.textContent = 'ASL: Starting...';
+
+  // Reuse the camera stream that TandemApp already acquired
+  if (localVideo && localVideo.srcObject) {
+    console.log('Using camera stream from TandemApp');
+    aslVideo.srcObject = localVideo.srcObject;
+    try { await aslVideo.play(); } catch (e) { console.warn('ASL video play:', e); }
+  } else {
+    // Fallback: request our own camera stream
+    console.log('No TandemApp stream yet — requesting own camera');
+    if (aslStatus) aslStatus.textContent = 'ASL: Requesting camera...';
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+      aslVideo.srcObject = stream;
+      await aslVideo.play();
+    } catch (e) {
+      console.error('Camera error:', e);
+      if (aslStatus) aslStatus.textContent = 'ASL: Camera error - ' + e.message;
+      return;
+    }
+  }
+
+  console.log('Camera ready');
+  if (aslStatus) aslStatus.textContent = 'ASL: Loading model...';
+
+  await loadMediaPipe();
+  console.log('MediaPipe loaded');
+  if (aslStatus) aslStatus.textContent = 'ASL: Ready - show your hand!';
+
+  processVideo(aslVideo);
+}
+
+function loadMediaPipe() {
+  return new Promise((resolve, reject) => {
+    if (typeof Hands !== 'undefined') {
+      console.log('Hands already loaded');
+      resolve();
+      return;
+    }
+
+    console.log('Loading MediaPipe Hands...');
+    const script = document.createElement('script');
+    script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.min.js';
+    script.onload = () => {
+      console.log('MediaPipe script loaded');
+      resolve();
+    };
+    script.onerror = (e) => {
+      console.error('Failed to load MediaPipe:', e);
+      reject(e);
+    };
+    document.head.appendChild(script);
+  });
+}
+
+function processVideo(video) {
+  console.log('Starting video processing');
+
+  // Wait for Hands to be available (async)
+  async function waitForHands() {
+    let attempts = 0;
+    while (typeof Hands === 'undefined' && attempts < 50) {
+      await new Promise(r => setTimeout(r, 100));
+      attempts++;
+    }
+    return typeof Hands !== 'undefined';
+  }
+
+  waitForHands().then(handsLoaded => {
+    if (!handsLoaded) {
+      console.error('Hands never loaded');
+      return;
+    }
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 1,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.3,
+      minTrackingConfidence: 0.3
+    });
+
+    hands.onResults(onHandsResults);
+
+    function sendFrame() {
+      if (video.readyState >= 2) {
+        hands.send({ image: video });
+      }
+      requestAnimationFrame(sendFrame);
+    }
+
+    sendFrame();
+    console.log('Processing started');
+  });
+}
+
+
+async function onHandsResults(results) {
+  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    return;
+  }
+
+  // Hand detected!
+  console.log('Hand detected!');
+  const landmarks = results.multiHandLandmarks[0];
+
+  // Extract features
+  const features = [];
+  const xCoords = landmarks.map(l => l.x);
+  const yCoords = landmarks.map(l => l.y);
+  const minX = Math.min(...xCoords);
+  const minY = Math.min(...yCoords);
+
+  for (let i = 0; i < landmarks.length; i++) {
+    features.push(landmarks[i].x - minX);
+    features.push(landmarks[i].y - minY);
+  }
+
+  // Send landmarks to Python model via the Node.js /api/predict proxy.
+  try {
+    const resp = await fetch(`${ASL_API_URL}/api/predict`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ features })
+    });
+
+    if (resp.ok) {
+      const data = await resp.json();
+      console.log('[ASL] Prediction:', data.prediction, 'Confidence:', data.probability);
+
+      // Threshold of 0.4 filters out low-confidence noise while still being responsive.
+      if (data.prediction && data.probability > 0.4) {
+        showPrediction(data.prediction);
+        return;
+      }
+    } else {
+      const err = await resp.json().catch(() => ({}));
+      console.warn('[ASL] API error:', resp.status, err.error || '');
+    }
+  } catch (e) {
+    console.warn('[ASL] API unreachable (is asl_api.py running via npm run start:all?):', e.message);
+  }
+
+  // Fallback
+  const pred = predictHeuristic(landmarks);
+  if (pred) {
+    showPrediction(pred);
+  }
+}
+
+function predictHeuristic(landmarks) {
+  const tips = [4, 8, 12, 16, 20];
+  const bases = [2, 5, 9, 13, 17];
+  const fingers = [];
+
+  for (let i = 0; i < 5; i++) {
+    if (i === 0) {
+      fingers.push(landmarks[4].x > landmarks[2].x ? 1 : 0);
+    } else {
+      fingers.push(landmarks[tips[i]].y < landmarks[bases[i]].y ? 1 : 0);
+    }
+  }
+
+  const [t, i, m, r, p] = fingers;
+
+  if (!i && !m && !r && !p && t) return 'A';
+  if (!i && !m && !r && !p && !t) return 'S';
+  if (i && m && !r && !p && !t) return 'V';
+  if (i && !m && !r && !p && !t) return 'I';
+  if (!i && m && !r && !p && !t) return 'U';
+  if (i && m && r && !p && !t) return 'Y';
+  if (i && m && r && p && !t) return 'B';
+  if (i && m && r && p && t) return 'E';
+  if (!t && i && !m && !r && !p) return 'L';
+  if (!t && !i && m && !r && !p) return 'W';
+
+  return null;
+}
+
+function showPrediction(prediction) {
+  if (prediction === lastASLPrediction) return;
+
+  const now = Date.now();
+  // Debounce: don't fire faster than 700 ms to avoid flooding the API.
+  if (aslHistory.length > 0 && now - aslHistory[aslHistory.length - 1].time < 700) {
+    return;
+  }
+
+  lastASLPrediction = prediction;
+  aslHistory.push({ prediction, time: now });
+
+  console.log('Showing:', prediction);
+
+  const el = document.getElementById('aslPrediction');
+  if (el) el.textContent = prediction;
+
+  // Send to peer
+  if (window.socket && window.socket.connected) {
+    window.socket.emit('aslPrediction', { prediction });
+  }
+}
