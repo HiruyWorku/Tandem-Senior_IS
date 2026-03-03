@@ -151,11 +151,9 @@
 
     <div class="controls">
       <button id="toggleMic" class="control-button mic-on" title="Mute/Unmute Microphone">
-        <span class="icon">🎤</span>
         <span class="text">Unmute</span>
       </button>
       <button id="toggleCamera" class="control-button camera-on" title="Turn Camera On/Off">
-        <span class="icon">🎥</span>
         <span class="text">Camera</span>
       </button>
     </div>
@@ -189,17 +187,12 @@
         </div>
       </div>
 
-      <div class="avatar-container">
-        <div id="avatar-panel"></div>
-      </div>
-
       <div class="status-bar">
         <span class="user-badge hearing-badge">You are joining as: Hearing User</span>
-        <span>Speak normally - your words will be signed by the avatar</span>
+        <span>Speak normally - the deaf user will see your words converted to signs</span>
       </div>
     </main>
 
-    <script src="/avatar.js" type="module"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="/script.js" type="module"></script>
     <script src="/hearing.js" type="module"></script>
