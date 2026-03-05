@@ -1,4 +1,5 @@
 // deaf.js - ASL Recognition for Deaf User
+// NOTE: showPillToast() is provided by script.js (loaded before this file).
 
 let lastASLPrediction = '';
 const aslHistory = [];
@@ -6,50 +7,6 @@ const aslHistory = [];
 // This avoids CORS and works regardless of where the app is deployed.
 const ASL_API_URL = '';
 
-console.log('Deaf user script loaded');
-
-/**
- * showPillToast — reusable self-contained pill toast (no external CSS needed).
- * The element is created once and reused on subsequent calls.
- */
-function showPillToast(id, message, color) {
-  let toast = document.getElementById(id);
-  if (!toast) {
-    toast = document.createElement('div');
-    toast.id = id;
-    Object.assign(toast.style, {
-      position: 'fixed',
-      bottom: '28px',
-      left: '50%',
-      transform: 'translateX(-50%) translateY(12px)',
-      background: 'rgba(10, 14, 30, 0.92)',
-      padding: '6px 18px',
-      borderRadius: '999px',
-      fontSize: '0.8rem',
-      fontWeight: '600',
-      letterSpacing: '0.04em',
-      opacity: '0',
-      transition: 'opacity 0.25s ease, transform 0.25s ease',
-      pointerEvents: 'none',
-      zIndex: '9999',
-      whiteSpace: 'nowrap',
-    });
-    document.body.appendChild(toast);
-  }
-  toast.textContent = message;
-  toast.style.color = color;
-  toast.style.border = `1.5px solid ${color}`;
-  toast.style.boxShadow = `0 0 8px ${color}40`;
-  clearTimeout(toast._hide);
-  requestAnimationFrame(() => {
-    toast.style.opacity = '1';
-    toast.style.transform = 'translateX(-50%) translateY(0)';
-  });
-  toast._hide = setTimeout(() => {
-    toast.style.opacity = '0';
-    toast.style.transform = 'translateX(-50%) translateY(10px)';
-  }, 2000);
-}
 
 (async function init() {
   try {

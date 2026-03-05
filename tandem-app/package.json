@@ -6,10 +6,11 @@
   "scripts": {
     "start": "node server.js",
     "dev": "NODE_ENV=development node server.js",
-    "asl": "python asl_api.py",
-    "start:all": "concurrently --kill-others-on-fail --names \"node,asl\" --prefix-colors \"cyan,green\" \"npm start\" \"npm run asl\""
+    "asl": "python server/asl_api.py",
+    "start:all": "concurrently --kill-others-on-fail --names \"node,asl\" --prefix-colors \"cyan,green\" \"npm start\" \"npm run asl\"",
+    "test": "node --test test/smoke.test.js"
   },
-  "author": "",
+  "author": "Hiruy Worku",
   "license": "MIT",
   "dependencies": {
     "@google-cloud/speech": "^7.2.1",

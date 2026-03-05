@@ -2,7 +2,8 @@ const path = require('path');
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
-const speechToText = require('./speech-to-text');
+// All server-side modules live under server/ for a clean layout
+const speechToText = require('./server/speechToText');
 const poseProxy = require('./server/poseProxy');
 const tts = require('./server/textToSpeech');
 
@@ -59,6 +60,11 @@ app.get('/ice-config', (req, res) => {
 
 const DEFAULT_ROOM = 'main-room';
 
+/**
+ * Returns the number of sockets currently in a named Socket.IO room.
+ * @param {string} roomName
+ * @returns {number}
+ */
 function getRoomSize(roomName) {
   const room = io.sockets.adapter.rooms.get(roomName);
   return room ? room.size : 0;
@@ -78,10 +84,6 @@ io.on('connection', (socket) => {
   const keepAlive = setInterval(() => {
     if (socket.connected) socket.emit('ping');
   }, 30000);
-
-  socket.on('disconnect', () => {
-    clearInterval(keepAlive);
-  });
 
   socket.on('reconnect_attempt', (attemptNumber) => {
     console.log(`Client ${socket.id} reconnection attempt ${attemptNumber}`);
@@ -133,16 +135,15 @@ io.on('connection', (socket) => {
     }, SENTENCE_HOLD_MS);
   });
 
+  // Single consolidated disconnect handler — previously this was split across
+  // two separate socket.on('disconnect') calls (a bug that caused the second
+  // handler to silently shadow the first).
   socket.on('disconnect', (reason) => {
     console.log(`Client ${socket.id} disconnected:`, reason);
+    clearInterval(keepAlive);
     clearTimeout(sentenceBuffer.timer);
     sentenceBuffer.text = '';
-    if (socket.room) {
-      socket.leave(socket.room);
-    }
-  });
-
-  socket.on('disconnect', () => {
+    if (socket.room) socket.leave(socket.room);
     speechToText.cleanup(socket.id);
     socket.to(DEFAULT_ROOM).emit('peer_disconnected');
   });
