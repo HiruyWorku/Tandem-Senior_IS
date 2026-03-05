@@ -1,0 +1,22 @@
+{
+  "name": "tandem-app",
+  "version": "1.0.0",
+  "description": "Unified video conferencing app connecting deaf and hearing users with ASL recognition",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "NODE_ENV=development node server.js",
+    "asl": "python server/asl_api.py",
+    "start:all": "concurrently --kill-others-on-fail --names \"node,asl\" --prefix-colors \"cyan,green\" \"npm start\" \"npm run asl\"",
+    "test": "node --test test/smoke.test.js"
+  },
+  "author": "Hiruy Worku",
+  "license": "MIT",
+  "dependencies": {
+    "@google-cloud/speech": "^7.2.1",
+    "@google-cloud/text-to-speech": "^6.4.0",
+    "concurrently": "^8.2.0",
+    "express": "^4.21.2",
+    "socket.io": "^4.8.1"
+  }
+}
