@@ -2,7 +2,12 @@
 
 Tandem is a near-real-time video conferencing application that enables natural communication between Deaf or Hard of Hearing(DHH) and hearing individuals. A DHH user signs via webcam; the ML model recognises the ASL letter/gesture, converts it to text, and the hearing user hears it spoken aloud and vice versa, speech is captioned and rendered as a signing avatar.
 
+view full wiki indexing here: https://deepwiki.com/HiruyWorku/Tandem-Senior_IS-/1-overview
+
 ---
+<img width="1070" height="310" alt="newapi" src="https://github.com/user-attachments/assets/267fd84f-39ac-4fce-89a3-0b9af426db5a" />
+
+
 
 ## Sub-projects
 
@@ -34,7 +39,7 @@ Open **http://localhost:3000** — choose Deaf or Hearing to join a session.
 ## Research Resources
 
 ### Signing Avatar
-- https://sign.mt/ — production signing translation service
+- https://sign.mt/ - production signing translation service
 - https://github.com/sign/translate
 - https://github.com/aws-samples/genai-asl-avatar-generator
 
