@@ -1,144 +1,57 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tandem - Connect Deaf & Hearing</title>
-    <link rel="stylesheet" href="/style.css" />
-    <style>
-      * {
-        margin: 0;
-        padding: 0;
-        box-sizing: border-box;
-      }
 
-      body {
-        min-height: 100vh;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-        justify-content: center;
-        background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
-        font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-        color: #fff;
-      }
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tandem</title>
+  <meta name="description"
+    content="Real-time ASL video calling connecting deaf and hearing users through AI-powered sign language recognition." />
+  <link rel="stylesheet" href="/style.css" />
+</head>
 
-      .landing-container {
-        text-align: center;
-        max-width: 600px;
-        padding: 40px;
-      }
+<body>
+  <div class="landing-bg">
+    <div class="landing-card">
+      <div class="landing-wordmark">Tandem</div>
+      <!-- <p class="landing-tagline">Real-time communication between deaf and hearing users</p> -->
 
-      .logo {
-        font-size: 3rem;
-        margin-bottom: 10px;
-      }
-
-      h1 {
-        font-size: 2.5rem;
-        margin-bottom: 10px;
-        color: #e94560;
-      }
-
-      .subtitle {
-        font-size: 1.2rem;
-        color: #a0a0a0;
-        margin-bottom: 40px;
-      }
-
-      .user-type-selection {
-        display: flex;
-        gap: 30px;
-        justify-content: center;
-        flex-wrap: wrap;
-      }
-
-      .user-card {
-        background: rgba(255, 255, 255, 0.05);
-        border: 2px solid rgba(255, 255, 255, 0.1);
-        border-radius: 20px;
-        padding: 40px 30px;
-        width: 220px;
-        cursor: pointer;
-        transition: all 0.3s ease;
-        text-decoration: none;
-        color: #fff;
-        display: flex;
-        flex-direction: column;
-        align-items: center;
-      }
-
-      .user-card:hover {
-        transform: translateY(-10px);
-        border-color: #e94560;
-        background: rgba(233, 69, 96, 0.1);
-      }
-
-      .user-card .icon {
-        font-size: 4rem;
-        margin-bottom: 20px;
-      }
-
-      .user-card h2 {
-        font-size: 1.5rem;
-        margin-bottom: 10px;
-      }
-
-      .user-card p {
-        color: #a0a0a0;
-        font-size: 0.9rem;
-      }
-
-      .deaf-card {
-        border-color: #4ecca3;
-      }
-
-      .deaf-card:hover {
-        border-color: #4ecca3;
-        background: rgba(78, 204, 163, 0.1);
-      }
-
-      .hearing-card {
-        border-color: #e94560;
-      }
-
-      .info-box {
-        margin-top: 40px;
-        padding: 20px;
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 10px;
-        max-width: 500px;
-      }
-
-      .info-box h3 {
-        color: #e94560;
-        margin-bottom: 10px;
-      }
-
-      .info-box p {
-        color: #a0a0a0;
-        line-height: 1.6;
-      }
-    </style>
-  </head>
-  <body>
-    <div class="landing-container">
-      <h1>Tandem</h1>
-      <!-- <p class="subtitle">Bridging Deaf and Hearing Communities</p> -->
-
-      <p style="margin-bottom: 30px; color: #ccc;">How would you like to join?</p>
-
-      <div class="user-type-selection">
-        <a href="/deaf.html" class="user-card deaf-card">
-          <h2>Deaf or Hard of Hearing User</h2>
-          <p>Use ASL to communicate. You'll see the signs converted to avatar for the hearing person.</p>
+      <div class="join-grid">
+        <a href="/deaf.html" class="join-card deaf-card">
+          <div class="join-icon teal">
+            <!-- Hand / ASL icon -->
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+              stroke-linecap="round" stroke-linejoin="round" style="color:var(--teal)">
+              <path d="M18 11V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2" />
+              <path d="M14 10V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v2" />
+              <path d="M10 10.5V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v8" />
+              <path
+                d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15" />
+            </svg>
+          </div>
+          <h2>Deaf / Hard of Hearing</h2>
+          <p>Sign via your camera. Your ASL is recognised in real time and spoken to the hearing user.</p>
         </a>
 
-        <a href="/hearing.html" class="user-card hearing-card">
-          <h2>Hearing User</h2>
-          <p>Speak normally. You'll hear speech of what the deaf user is signing.</p>
+        <a href="/hearing.html" class="join-card hearing-card">
+          <div class="join-icon rose">
+            <!-- Microphone icon -->
+            <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+              stroke-linecap="round" stroke-linejoin="round" style="color:var(--rose)">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+              <line x1="12" y1="19" x2="12" y2="23" />
+              <line x1="8" y1="23" x2="16" y2="23" />
+            </svg>
+          </div>
+          <h2>Hearing</h2>
+          <p>Speak loudly. Your words are captioned and rendered as a signing avatar.</p>
         </a>
       </div>
+
+      <p class="landing-info">Both users must join for the call to connect &nbsp;·&nbsp; Chrome/Edge recommended</p>
     </div>
-  </body>
+  </div>
+</body>
+
 </html>

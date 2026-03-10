@@ -10,10 +10,23 @@ const tts = require('./server/textToSpeech');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
-  serveClient: true
+  serveClient: true,
+  // Increased timeouts for ngrok/proxied connections — default 5s is too tight
+  pingTimeout: 60000,
+  pingInterval: 30000,
+  // Allow connections from any origin (needed when using ngrok URL)
+  cors: { origin: '*', methods: ['GET', 'POST'] },
+  allowEIO3: true,
+  transports: ['websocket', 'polling'],
 });
 
 app.use(express.json());
+// Bypass the ngrok browser warning interstitial — without this header,
+// the second device sees an ngrok warning page instead of the app.
+app.use((_req, res, next) => {
+  res.setHeader('ngrok-skip-browser-warning', 'true');
+  next();
+});
 app.use(express.static(path.join(__dirname, 'public')));
 app.use(poseProxy);
 
