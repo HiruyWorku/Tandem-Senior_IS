@@ -1,204 +1,144 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Tandem - Deaf User</title>
-    <link rel="stylesheet" href="/style.css" />
-    <link rel="stylesheet" href="/avatar.css" />
-    <style>
-      .deaf-layout {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        grid-template-rows: auto 1fr auto;
-        gap: 15px;
-        height: calc(100vh - 120px);
-        padding: 15px;
-      }
 
-      .deaf-layout header {
-        grid-column: 1 / -1;
-      }
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tandem — Deaf User</title>
+  <link rel="stylesheet" href="/style.css" />
+  <link rel="stylesheet" href="/avatar.css" />
+  <style>
+    /* Shared SVG icon sizing */
+    .btn-icon {
+      width: 16px;
+      height: 16px;
+      display: block;
+      flex-shrink: 0;
+    }
 
-      .video-section {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-      }
+    .logo-icon {
+      width: 18px;
+      height: 18px;
+      display: block;
+    }
+  </style>
+</head>
 
-      .asl-section {
-        background: rgba(78, 204, 163, 0.1);
-        border: 2px solid #4ecca3;
-        border-radius: 15px;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-      }
+<body>
+  <div class="app-shell">
 
-      .asl-section h3 {
-        color: #4ecca3;
-        margin-bottom: 10px;
-        font-size: 1rem;
-      }
-
-      .asl-video-container {
-        position: relative;
-        flex: 1;
-        min-height: 280px;
-        background: #000;
-        border-radius: 10px;
-        overflow: hidden;
-      }
-
-      .asl-video-container video {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-      }
-
-      .asl-prediction {
-        position: absolute;
-        top: 10px;
-        left: 10px;
-        background: rgba(0, 0, 0, 0.7);
-        color: #4ecca3;
-        padding: 8px 15px;
-        border-radius: 20px;
-        font-size: 1.2rem;
-        font-weight: bold;
-      }
-
-      .remote-section {
-        background: rgba(233, 69, 96, 0.1);
-        border: 2px solid #e94560;
-        border-radius: 15px;
-        padding: 10px;
-        display: flex;
-        flex-direction: column;
-      }
-
-      .remote-section h3 {
-        color: #e94560;
-        margin-bottom: 10px;
-        font-size: 1rem;
-      }
-
-      .remote-video-container {
-        position: relative;
-        flex: 1;
-        min-height: 200px;
-        background: #000;
-        border-radius: 10px;
-        overflow: hidden;
-      }
-
-      .remote-video-container video {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-      }
-
-      .avatar-container {
-        flex: 1;
-        min-height: 200px;
-      }
-
-      .status-bar {
-        grid-column: 1 / -1;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-        padding: 10px 20px;
-        background: rgba(255, 255, 255, 0.05);
-        border-radius: 10px;
-      }
-
-      .user-badge {
-        padding: 5px 15px;
-        border-radius: 20px;
-        font-size: 0.9rem;
-      }
-
-      .deaf-badge {
-        background: #4ecca3;
-        color: #1a1a2e;
-      }
-
-      .asl-status {
-        color: #4ecca3;
-      }
-
-      .asl-history {
-        background: rgba(0, 0, 0, 0.5);
-        border-radius: 10px;
-        padding: 10px;
-        max-height: 60px;
-        overflow-y: auto;
-        margin-top: 10px;
-      }
-
-      .asl-history p {
-        color: #4ecca3;
-        font-size: 0.9rem;
-        margin: 3px 0;
-      }
-    </style>
-  </head>
-  <body>
-    <header class="app-header">
-      <h1>Tandem - Deaf User</h1>
-      <div class="status">
+    <!-- Top Bar -->
+    <header class="topbar">
+      <a href="/" class="topbar-brand">
+        <div class="topbar-logo">
+          <!-- Waveform / brand mark -->
+          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"
+            stroke-linejoin="round">
+            <path d="M2 12h3M5 7v10M9 4v16M13 9v6M17 6v12M21 12h-3" />
+          </svg>
+        </div>
+        Tandem
+      </a>
+      <div class="topbar-status">
+        <div id="status-dot" class="status-dot waiting"></div>
         <span id="status-text">Initializing…</span>
       </div>
+      <span class="topbar-badge badge-deaf">Deaf / HoH</span>
     </header>
 
-    <div class="controls">
-      <button id="toggleMic" class="control-button mic-on" title="Mute/Unmute Microphone">
-        <span class="text">Unmute</span>
+    <!-- Controls -->
+    <div class="controls-bar">
+      <button id="toggleMic" class="ctrl-btn mic-on" title="Toggle microphone">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
+          <line x1="12" y1="19" x2="12" y2="23" />
+          <line x1="8" y1="23" x2="16" y2="23" />
+        </svg>
+        <span class="text">Mic</span>
       </button>
-      <button id="toggleCamera" class="control-button camera-on" title="Turn Camera On/Off">
+      <button id="toggleCamera" class="ctrl-btn camera-on" title="Toggle camera">
+        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+          stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 7l-7 5 7 5V7z" />
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+        </svg>
         <span class="text">Camera</span>
       </button>
     </div>
 
-    <main class="deaf-layout">
-      <section class="video-section">
-        <div class="asl-section">
-          <h3>Your Signs (ASL Recognition)</h3>
-          <div class="asl-video-container">
-            <video id="aslVideo" autoplay playsinline muted></video>
-            <div id="aslPrediction" class="asl-prediction">Waiting...</div>
-          </div>
-          <div class="asl-history">
-            <div id="aslHistory"></div>
-          </div>
-        </div>
-      </section>
+    <!-- Main Grid: ASL Camera | Remote Video | Avatar -->
+    <main class="content-grid three-col">
 
-      <section class="video-section">
-        <div class="remote-section">
-          <h3>Remote User</h3>
-          <div class="remote-video-container">
-            <video id="remoteVideo" autoplay playsinline></video>
-          </div>
+      <!-- Column 1: Your ASL camera feed -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-dot teal"></div>
+          <span class="panel-title">Your Signs (ASL)</span>
+          <span id="aslStatus" style="font-size:11px; color: var(--text-muted);">Loading…</span>
         </div>
-      </section>
-
-      <div class="avatar-container">
-        <div id="avatar-panel"></div>
+        <div class="panel-body">
+          <video id="aslVideo" autoplay playsinline muted></video>
+          <div id="aslPrediction" class="prediction-chip">Waiting…</div>
+        </div>
       </div>
 
-      <div class="status-bar">
-        <span class="user-badge deaf-badge">You are joining as: Deaf User</span>
-        <span id="aslStatus" class="asl-status">ASL Recognition: Loading model...</span>
+      <!-- Column 2: Remote hearing user video -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-dot rose"></div>
+          <span class="panel-title">Hearing User</span>
+        </div>
+        <div class="panel-body">
+          <video id="remoteVideo" autoplay playsinline></video>
+        </div>
+        <!-- STT subtitle strip — backup text for the signing avatar -->
+        <div class="subtitle-strip" id="remoteSubtitleStrip">
+          <span class="subtitle-label">🗣️</span>
+          <span id="remoteCaptions" class="subtitle-text">Waiting for speech…</span>
+        </div>
       </div>
+
+      <!-- Column 3: Signing avatar -->
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-dot blue"></div>
+          <span class="panel-title">Signing Avatar</span>
+        </div>
+        <div class="panel-body" style="display:flex; flex-direction:column;">
+          <div id="avatar-panel"></div>
+        </div>
+      </div>
+
     </main>
 
-    <video id="localVideo" autoplay playsinline muted style="display: none;"></video>
+    <!-- Footer -->
+    <footer class="footer-bar">
+      <span>Your ASL signs are sent to the hearing user as text + audio</span>
+      <span id="aslHistoryLine" style="color:var(--teal); font-weight:500;"></span>
+    </footer>
 
-    <script src="/avatar.js" type="module"></script>
-    <script src="/socket.io/socket.io.js"></script>
-    <script src="/script.js" type="module"></script>
-    <script src="/deaf.js" type="module"></script>
-  </body>
+  </div>
+
+  <video id="localVideo" autoplay playsinline muted style="display:none;"></video>
+
+  <script src="/avatar.js" type="module"></script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="/script.js" type="module"></script>
+  <script src="/deaf.js" type="module"></script>
+  <script>
+    const _statusText = document.getElementById('status-text');
+    const _dot = document.getElementById('status-dot');
+    new MutationObserver(() => {
+      const t = _statusText.textContent.toLowerCase();
+      _dot.className = 'status-dot ' + (
+        t.includes('wait') ? 'waiting' :
+          t.includes('connect') && !t.includes('error') ? 'connected' :
+            t.includes('error') ? 'error' : 'waiting'
+      );
+    }).observe(_statusText, { childList: true, characterData: true, subtree: true });
+  </script>
+</body>
+
 </html>

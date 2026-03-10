@@ -15,6 +15,8 @@ let audioProcessingInitialized = false;
 
 let lastTranscriptUpdate = 0;
 const TRANSCRIPT_TIMEOUT = 3000;
+// Per-strip timers so local and remote resets don't cancel each other
+const _transcriptTimers = {};
 
 function setupDataChannel(channel) {
   channel.onopen = () => {
@@ -60,10 +62,9 @@ function updateTranscript(transcript, isFinal = true, isLocal = true) {
 
   captionsEl.textContent = transcript;
 
-  const container = captionsEl.closest('.captions-container');
-  if (container) {
-    container.style.display = 'block';
-  }
+  // Highlight the subtitle strip while speech is active
+  const strip = captionsEl.closest('.subtitle-strip');
+  if (strip) strip.classList.add('has-text');
 
   lastTranscriptUpdate = Date.now();
 
@@ -79,13 +80,16 @@ function updateTranscript(transcript, isFinal = true, isLocal = true) {
     }
   }
 
-  clearTimeout(window.transcriptTimeout);
-  window.transcriptTimeout = setTimeout(() => {
+  clearTimeout(_transcriptTimers[captionsEl.id]);
+  _transcriptTimers[captionsEl.id] = setTimeout(() => {
     if (Date.now() - lastTranscriptUpdate >= TRANSCRIPT_TIMEOUT) {
-      captionsEl.textContent = '';
-      if (container) {
-        container.style.display = 'none';
+      // Reset to idle placeholder text
+      if (captionsEl) {
+        captionsEl.textContent = isLocal
+          ? 'Speak \u2014 your words appear here\u2026'
+          : 'Waiting for speech\u2026';
       }
+      if (strip) strip.classList.remove('has-text');
     }
   }, TRANSCRIPT_TIMEOUT);
 }
