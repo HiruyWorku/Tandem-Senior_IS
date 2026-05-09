@@ -456,6 +456,22 @@ video {
   animation: chip-in 0.2s ease;
 }
 
+/* Completed word chip — brighter, solid */
+.sign-chip--word {
+  background: rgba(78, 204, 163, 0.18);
+  border-color: rgba(78, 204, 163, 0.5);
+  font-weight: 600;
+}
+
+/* Live letter accumulation chip — muted, italic */
+.sign-chip--live {
+  background: rgba(255, 255, 255, 0.05);
+  border-color: rgba(255, 255, 255, 0.15);
+  color: var(--text-muted, #888);
+  font-style: italic;
+  letter-spacing: 0.05em;
+}
+
 @keyframes chip-in {
   from {
     opacity: 0;

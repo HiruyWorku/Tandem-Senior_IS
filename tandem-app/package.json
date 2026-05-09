@@ -4,15 +4,18 @@
   "description": "Unified video conferencing app connecting deaf and hearing users with ASL recognition",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js",
-    "dev": "NODE_ENV=development node server.js",
+    "start": "node --env-file=.env server.js",
+    "dev": "NODE_ENV=development node --env-file=.env server.js",
     "asl": "python server/asl_api.py",
     "start:all": "concurrently --kill-others-on-fail --names \"node,asl\" --prefix-colors \"cyan,green\" \"npm start\" \"npm run asl\"",
-    "test": "node --test test/smoke.test.js"
+    "test": "node --test test/smoke.test.js",
+    "docker:build": "docker build -t tandem-app .",
+    "docker:run": "docker run --rm -p 3000:3000 --env-file .env -v \"$(pwd)/asl/model.p:/app/asl/model.p\" tandem-app"
   },
   "author": "Hiruy Worku",
   "license": "MIT",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.95.1",
     "@google-cloud/speech": "^7.2.1",
     "@google-cloud/text-to-speech": "^6.4.0",
     "concurrently": "^8.2.0",

@@ -30,7 +30,7 @@ npm run start:all              # starts Node.js + Python ASL API together
 Open **http://localhost:3000** — choose Deaf or Hearing to join a session.
 
 ---
-
+ 
 ## Research Resources
 
 ### Signing Avatar

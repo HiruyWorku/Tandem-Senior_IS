@@ -3,13 +3,23 @@
 
 let lastASLPrediction = '';
 const aslHistory = [];
-// Use a relative URL so requests go through the Node.js /api/predict proxy.
-// This avoids CORS and works regardless of where the app is deployed.
 const ASL_API_URL = '';
+
+// Word boundary detection — letters accumulate here until the user pauses.
+// 1.5 s of silence = word complete → flush to server for Claude interpretation.
+const wordBuffer = [];
+let wordBoundaryTimer = null;
+const WORD_BOUNDARY_MS = 1500;
 
 
 (async function init() {
   try {
+    const roomCode = new URLSearchParams(window.location.search).get('room');
+    if (!roomCode) {
+      window.location.href = '/';
+      return;
+    }
+
     window.TandemApp.setStatus('Requesting camera and microphone…');
     await window.TandemApp.initMedia();
 
@@ -20,18 +30,16 @@ const ASL_API_URL = '';
     await window.TandemApp.createPeerConnection();
 
     window.TandemApp.setStatus('Connecting to signaling server…');
-    window.TandemApp.initSocket('deaf');
+    window.TandemApp.initSocket('deaf', roomCode);
 
     window.TandemApp.setStatus('Waiting for peer…');
 
-    // Listen for the hearing user's TTS completion signal.
-    // When the hearing peer finishes speaking a sign aloud, notify the deaf user.
+    // Listen for the hearing user’s TTS completion signal.
     if (window.socket) {
       window.socket.on('ttsSpoken', () => {
         showPillToast('tandem-tts-toast', '🔊 Spoken', '#e9a84c');
       });
     } else {
-      // socket may not be ready yet — attach after initSocket sets window.socket
       const waitForSocket = setInterval(() => {
         if (window.socket) {
           clearInterval(waitForSocket);
@@ -42,8 +50,14 @@ const ASL_API_URL = '';
       }, 100);
     }
 
-    // Kick off ASL recognition using the same camera stream TandemApp acquired
-    initASL();
+    // Kick off ASL recognition. Await it so errors surface in the status badge.
+    try {
+      await initASL();
+    } catch (aslErr) {
+      console.error('[ASL] initASL failed:', aslErr);
+      const aslStatus = document.getElementById('aslStatus');
+      if (aslStatus) aslStatus.textContent = 'ASL: Error — ' + aslErr.message;
+    }
   } catch (err) {
     console.error(err);
     window.TandemApp.setStatus('Error initializing application. Check console.');
@@ -58,24 +72,25 @@ async function initASL() {
   console.log('Initializing ASL recognition...');
   if (aslStatus) aslStatus.textContent = 'ASL: Starting...';
 
-  // Reuse the camera stream that TandemApp already acquired
+  // Reuse the camera stream that TandemApp already acquired.
+  // Wait up to 2 s for localVideo to have its stream (race with initMedia).
+  let waited = 0;
+  while ((!localVideo || !localVideo.srcObject) && waited < 2000) {
+    await new Promise(r => setTimeout(r, 100));
+    waited += 100;
+  }
+
   if (localVideo && localVideo.srcObject) {
     console.log('Using camera stream from TandemApp');
     aslVideo.srcObject = localVideo.srcObject;
     try { await aslVideo.play(); } catch (e) { console.warn('ASL video play:', e); }
   } else {
     // Fallback: request our own camera stream
-    console.log('No TandemApp stream yet — requesting own camera');
+    console.log('No TandemApp stream — requesting own camera');
     if (aslStatus) aslStatus.textContent = 'ASL: Requesting camera...';
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
-      aslVideo.srcObject = stream;
-      await aslVideo.play();
-    } catch (e) {
-      console.error('Camera error:', e);
-      if (aslStatus) aslStatus.textContent = 'ASL: Camera error - ' + e.message;
-      return;
-    }
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+    aslVideo.srcObject = stream;
+    await aslVideo.play();
   }
 
   console.log('Camera ready');
@@ -83,7 +98,7 @@ async function initASL() {
 
   await loadMediaPipe();
   console.log('MediaPipe loaded');
-  if (aslStatus) aslStatus.textContent = 'ASL: Ready - show your hand!';
+  if (aslStatus) aslStatus.textContent = 'ASL: Ready — show your hand!';
 
   processVideo(aslVideo);
 }
@@ -112,21 +127,54 @@ function loadMediaPipe() {
 }
 
 function processVideo(video) {
-  console.log('Starting video processing');
+  console.log('[ASL] Starting video processing');
+  const aslStatus = document.getElementById('aslStatus');
 
-  // Wait for Hands to be available (async)
   async function waitForHands() {
+    // Give MediaPipe up to 30 s to fully initialise its WASM runtime.
     let attempts = 0;
-    while (typeof Hands === 'undefined' && attempts < 50) {
+    while (typeof Hands === 'undefined' && attempts < 300) {
       await new Promise(r => setTimeout(r, 100));
       attempts++;
     }
     return typeof Hands !== 'undefined';
   }
 
-  waitForHands().then(handsLoaded => {
+  // Wait for the video to have actual pixel data before feeding frames.
+  async function waitForVideoReady() {
+    // Method 1: canplay event (fires when enough data to play)
+    if (video.readyState < 3) {
+      await new Promise(resolve => {
+        video.addEventListener('canplay', resolve, { once: true });
+        // Safety: also resolve after 5s so we don't hang forever
+        setTimeout(resolve, 5000);
+      });
+    }
+    // Method 2: ensure videoWidth is non-zero (real pixel data available)
+    let tries = 0;
+    while (video.videoWidth === 0 && tries < 50) {
+      await new Promise(r => setTimeout(r, 100));
+      tries++;
+    }
+    console.log(`[ASL] Video ready — readyState=${video.readyState}, ${video.videoWidth}×${video.videoHeight}`);
+    if (aslStatus) aslStatus.textContent = video.videoWidth > 0
+      ? 'ASL: Ready — show your hand!'
+      : `ASL: Camera not rendering (readyState=${video.readyState})`;
+  }
+
+  waitForHands().then(async handsLoaded => {
     if (!handsLoaded) {
-      console.error('Hands never loaded');
+      console.error('[ASL] MediaPipe Hands never loaded (WASM timeout)');
+      if (aslStatus) aslStatus.textContent = 'ASL: Error — MediaPipe timeout';
+      return;
+    }
+
+    console.log('[ASL] Hands loaded, waiting for video...');
+    await waitForVideoReady();
+
+    if (video.videoWidth === 0) {
+      console.error('[ASL] Video has no pixel data — cannot send frames');
+      if (aslStatus) aslStatus.textContent = 'ASL: Camera not ready (no frames)';
       return;
     }
 
@@ -142,30 +190,54 @@ function processVideo(video) {
     });
 
     hands.onResults(onHandsResults);
+    console.log('[ASL] Hands instance ready, starting frame loop');
 
-    function sendFrame() {
-      if (video.readyState >= 2) {
-        hands.send({ image: video });
+    // Await each send so MediaPipe is never sent overlapping frames
+    // (causes dropped callbacks on the old 0.4.x runtime).
+    let sending = false;
+    async function sendFrame() {
+      if (!sending && video.readyState >= 2 && video.videoWidth > 0) {
+        sending = true;
+        try {
+          await hands.send({ image: video });
+        } catch (e) {
+          console.warn('[ASL] hands.send error:', e.message || e);
+        }
+        sending = false;
       }
       requestAnimationFrame(sendFrame);
     }
 
     sendFrame();
-    console.log('Processing started');
+    console.log('[ASL] Frame loop started');
   });
 }
 
 
+
 async function onHandsResults(results) {
+  const aslStatus = document.getElementById('aslStatus');
+
   if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
+    // No hand in frame — update status indicator
+    if (aslStatus && !aslStatus.textContent.startsWith('ASL: Error')) {
+      aslStatus.textContent = 'ASL: Show your hand!';
+      aslStatus.style.color = 'var(--text-muted, #888)';
+    }
     return;
   }
 
-  // Hand detected!
-  console.log('Hand detected!');
+  // Hand is in frame
+  if (aslStatus) {
+    aslStatus.textContent = 'ASL: ✋ Detecting...';
+    aslStatus.style.color = 'var(--teal, #50e3c2)';
+  }
+
   const landmarks = results.multiHandLandmarks[0];
 
-  // Extract features
+  // Extract features: normalised x, y per landmark — 42 features total.
+  // The Python model expects 84 features and pads the remaining 42 with zeros;
+  // this matches the format the model was trained on (x, y only, no z).
   const features = [];
   const xCoords = landmarks.map(l => l.x);
   const yCoords = landmarks.map(l => l.y);
@@ -189,9 +261,14 @@ async function onHandsResults(results) {
       const data = await resp.json();
       console.log('[ASL] Prediction:', data.prediction, 'Confidence:', data.probability);
 
-      // Threshold of 0.4 filters out low-confidence noise while still being responsive.
-      if (data.prediction && data.probability > 0.4) {
+      // Threshold lowered to 0.25 so more signs pass (model gets 63 features
+      // padded to 84; some accuracy loss is compensated by the lower bar).
+      if (data.prediction && data.probability > 0.25) {
         showPrediction(data.prediction);
+        if (aslStatus) {
+          aslStatus.textContent = `ASL: ✓ ${data.prediction} (${Math.round(data.probability * 100)}%)`;
+          aslStatus.style.color = 'var(--teal, #50e3c2)';
+        }
         return;
       }
     } else {
@@ -202,10 +279,14 @@ async function onHandsResults(results) {
     console.warn('[ASL] API unreachable (is asl_api.py running via npm run start:all?):', e.message);
   }
 
-  // Fallback
+  // Fallback heuristic predictor
   const pred = predictHeuristic(landmarks);
   if (pred) {
     showPrediction(pred);
+    if (aslStatus) {
+      aslStatus.textContent = `ASL: ~ ${pred} (heuristic)`;
+      aslStatus.style.color = '#e9a84c';
+    }
   }
 }
 
@@ -242,7 +323,6 @@ function showPrediction(prediction) {
   if (prediction === lastASLPrediction) return;
 
   const now = Date.now();
-  // Debounce: don't fire faster than 700 ms to avoid flooding the API.
   if (aslHistory.length > 0 && now - aslHistory[aslHistory.length - 1].time < 700) {
     return;
   }
@@ -250,13 +330,46 @@ function showPrediction(prediction) {
   lastASLPrediction = prediction;
   aslHistory.push({ prediction, time: now });
 
-  console.log('Showing:', prediction);
+  console.log('Signing:', prediction);
 
+  // Update the local prediction chip with the current letter.
   const el = document.getElementById('aslPrediction');
   if (el) el.textContent = prediction;
 
-  // Send to peer
-  if (window.socket && window.socket.connected) {
-    window.socket.emit('aslPrediction', { prediction });
+  // Accumulate into the word buffer and reset the boundary timer.
+  wordBuffer.push(prediction);
+  updateWordBufferDisplay();
+
+  clearTimeout(wordBoundaryTimer);
+  wordBoundaryTimer = setTimeout(flushWordBuffer, WORD_BOUNDARY_MS);
+}
+
+function updateWordBufferDisplay() {
+  const el = document.getElementById('aslPrediction');
+  if (el && wordBuffer.length > 0) {
+    el.textContent = wordBuffer.join('·');
   }
+}
+
+function flushWordBuffer() {
+  if (wordBuffer.length === 0) return;
+
+  const letters = [...wordBuffer];
+  wordBuffer.length = 0;
+
+  const el = document.getElementById('aslPrediction');
+  if (el) el.textContent = '…';
+
+  console.log('[word] flushing:', letters);
+
+  if (window.socket && window.socket.connected) {
+    window.socket.emit('aslWord', { letters });
+  }
+}
+
+// Also update the history display in the footer.
+function updateHistoryLine() {
+  const histEl = document.getElementById('aslHistoryLine');
+  if (!histEl) return;
+  histEl.textContent = aslHistory.slice(-8).map(h => h.prediction).join(' ');
 }

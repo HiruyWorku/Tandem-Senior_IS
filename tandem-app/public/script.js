@@ -97,18 +97,7 @@ function updateTranscript(transcript, isFinal = true, isLocal = true) {
 let isMicOn = true;
 let isCameraOn = true;
 
-let ICE_SERVERS = [
-  { urls: 'stun:stun.l.google.com:19302' },
-  {
-    urls: [
-      'turn:34.41.176.41:3478?transport=udp',
-      'turn:34.41.176.41:3478?transport=tcp'
-    ],
-    username: 'turnuser',
-    credential: 'turnpass',
-    credentialType: 'password'
-  }
-];
+let ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
 async function loadIceServers() {
   try {
@@ -306,17 +295,9 @@ async function createPeerConnection() {
   pc.onconnectionstatechange = () => {
     console.log(`[client] connection state changed: ${pc.connectionState}`);
     setStatus(`Connection: ${pc.connectionState}`);
-
-    if (pc.connectionState === 'disconnected' ||
-      pc.connectionState === 'failed' ||
-      pc.connectionState === 'closed') {
-      setTimeout(() => {
-        if (pc.connectionState !== 'connected' && pc.connectionState !== 'connecting') {
-          console.log('[client] Attempting to reconnect...');
-          initMedia().catch(console.error);
-        }
-      }, 2000);
-    }
+    // NOTE: Do NOT call initMedia() on disconnect — that creates a new camera
+    // stream not attached to pc, which orphans the old tracks and blacks out
+    // remote video. Re-negotiation is handled by the server join handler.
   };
 
   console.log('[client] RTCPeerConnection created', pc);
@@ -333,6 +314,11 @@ async function createPeerConnection() {
     const [remoteStream] = event.streams;
     if (remoteVideo) {
       remoteVideo.srcObject = remoteStream;
+      // Explicitly play — browsers don't auto-play when srcObject is replaced
+      // on a video element that was already used (causes black video on reconnect).
+      remoteVideo.play().catch(e => {
+        console.warn('[client] remoteVideo.play() failed:', e.message);
+      });
     }
   });
 
@@ -349,17 +335,52 @@ async function createPeerConnection() {
   });
 }
 
-function initSocket(userType) {
+// Fetch the server's per-boot instance ID and store it in sessionStorage.
+// If the ID changes on reconnect (server was restarted), reload the page so
+// a fresh RTCPeerConnection is guaranteed without the user having to manually
+// hit Cmd+Shift+R on both devices.
+async function checkServerInstance() {
+  try {
+    const res = await fetch('/instance-id', { cache: 'no-store' });
+    if (!res.ok) return;
+    const { id } = await res.json();
+    const stored = sessionStorage.getItem('tandem_server_id');
+    if (stored && stored !== id) {
+      console.log('[client] Server restarted (instance ID changed) — reloading page for fresh RTCPeerConnection');
+      sessionStorage.setItem('tandem_server_id', id);
+      window.location.reload();
+      return;
+    }
+    sessionStorage.setItem('tandem_server_id', id);
+  } catch (e) {
+    // Non-fatal — fall through and connect anyway
+  }
+}
+
+function initSocket(userType, roomCode) {
   socket = io();
   window.socket = socket;
-  socket.on('connect', () => {
+  socket.on('connect', async () => {
     console.log('[client] socket connected', socket.id);
+
+    await checkServerInstance();
+
+    if (pc && (pc.signalingState === 'closed' || pc.connectionState === 'closed' || pc.connectionState === 'failed')) {
+      console.log('[client] Stale RTCPeerConnection detected on reconnect — recreating');
+      try { pc.close(); } catch (_) {}
+      await createPeerConnection();
+    }
 
     if (audioStream && !isProcessingAudio) {
       isProcessingAudio = true;
     }
 
-    socket.emit('join', userType);
+    socket.emit('join', { userType, room: roomCode });
+  });
+
+  socket.on('invalid_room', () => {
+    setStatus('Invalid room code. Return to the home page to start a new session.');
+    console.error('[client] server rejected room code');
   });
 
   socket.on('transcript', (data) => {
@@ -384,16 +405,41 @@ function initSocket(userType) {
     if (typeof window.handleASLPrediction === 'function') {
       window.handleASLPrediction(data.prediction);
     }
-    if (data.prediction && dataChannel && dataChannel.readyState === 'open') {
-      try {
-        dataChannel.send(JSON.stringify({
-          type: 'aslPrediction',
-          prediction: data.prediction
-        }));
-      } catch (err) {
-        console.error('Error sending ASL prediction:', err);
-      }
+  });
+
+  socket.on('aslWordPending', (data) => {
+    console.log('[client] aslWordPending:', data.letters);
+    if (typeof window.handleASLWordPending === 'function') {
+      window.handleASLWordPending(data.letters);
     }
+  });
+
+  socket.on('aslWordResult', (data) => {
+    console.log('[client] aslWordResult:', data.word);
+    if (typeof window.handleASLWordResult === 'function') {
+      window.handleASLWordResult(data.word, data.letters);
+    }
+  });
+
+  socket.on('aslWordConfirm', (data) => {
+    const el = document.getElementById('aslPrediction');
+    if (el) el.textContent = data.word;
+    console.log('[client] word confirmed:', data.word);
+  });
+
+  // Final cleaned sentence arrives — show it and queue the avatar.
+  socket.on('aslSentence', (data) => {
+    console.log('[client] aslSentence:', data.sentence);
+    if (typeof window.handleASLSentence === 'function') {
+      window.handleASLSentence(data.sentence);
+    }
+  });
+
+  // Sentence confirmed back to the deaf user.
+  socket.on('aslSentenceConfirm', (data) => {
+    const el = document.getElementById('aslPrediction');
+    if (el) el.textContent = data.sentence;
+    console.log('[client] sentence confirmed:', data.sentence);
   });
 
   // Receive synthesized TTS audio from the server and play it.
@@ -484,6 +530,19 @@ function initSocket(userType) {
 
 async function makeOffer() {
   try {
+    // Recreate pc only for truly terminal states.
+    // 'disconnected' is temporary — ICE will retry automatically and the
+    // existing pc can still create a new offer (implicit ICE restart).
+    // 'failed' and 'closed' are terminal and need a fresh pc.
+    const terminalState = !pc
+      || pc.signalingState === 'closed'
+      || pc.connectionState === 'failed'
+      || pc.connectionState === 'closed';
+    if (terminalState) {
+      console.log(`[client] makeOffer: terminal pc state="${pc?.connectionState}" — recreating`);
+      try { pc?.close(); } catch (_) {}
+      await createPeerConnection();
+    }
     makingOffer = true;
     console.log('[client] creating offer');
     const offer = await pc.createOffer();

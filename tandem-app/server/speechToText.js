@@ -12,21 +12,21 @@ class SpeechToTextService {
   /**
    * Create a streaming recognizer for a socket connection
    */
-  createRecognizeStream(socketId, languageCode = 'en-US') {
+  createRecognizeStream(socketId, languageCode = 'en-US', sampleRateHertz = 48000, retryDelay = 1000) {
     console.log(`Creating recognize stream for socket ${socketId}`);
-    
-    // Clean up any existing stream for this socket
+
     this.cleanup(socketId);
-    
-    // Create a new stream info object
+
     const streamInfo = {
       stream: null,
       socket: null,
       restartTimer: null,
-      languageCode: languageCode,
-      lastRestart: Date.now()
+      languageCode,
+      sampleRateHertz,
+      lastRestart: Date.now(),
+      retryDelay,
     };
-    
+
     this.recognizeStreams.set(socketId, streamInfo);
     
     // Setup restart timer
@@ -37,14 +37,14 @@ class SpeechToTextService {
       
       streamInfo.restartTimer = setTimeout(() => {
         console.log(`Restarting speech recognition for socket ${socketId} to prevent timeout`);
-        this.createRecognizeStream(socketId, languageCode);
+        this.createRecognizeStream(socketId, languageCode, sampleRateHertz);
       }, this.STREAM_TIMEOUT);
     };
     
     const request = {
       config: {
         encoding: 'LINEAR16',
-        sampleRateHertz: 48000,
+          sampleRateHertz: sampleRateHertz,
         languageCode: languageCode,
         model: 'latest_long',
         useEnhanced: true,
@@ -84,14 +84,21 @@ class SpeechToTextService {
           socketId: socketId
         });
         
-        // Try to recover by creating a new stream
-        try {
-          console.log('Attempting to recover speech recognition stream...');
-          this.createRecognizeStream(socketId, languageCode);
-        } catch (recoveryError) {
-          console.error('Failed to recover speech recognition stream:', recoveryError);
+        // Recover with exponential backoff — cap at 30 s, give up after 5 min total.
+        const nextDelay = Math.min((streamInfo.retryDelay || 1000) * 2, 30000);
+        const elapsed = Date.now() - (streamInfo.lastRestart || Date.now());
+        if (elapsed > 5 * 60 * 1000) {
+          console.error(`[STT] Giving up on socket ${socketId} after 5 min of failures`);
           this.cleanup(socketId);
+          return;
         }
+        console.log(`[STT] Retrying in ${nextDelay / 1000}s for socket ${socketId}`);
+        setTimeout(() => {
+          const info = this.recognizeStreams.get(socketId);
+          const socket = info?.socket;
+          this.createRecognizeStream(socketId, languageCode, sampleRateHertz, nextDelay);
+          if (socket) this.bindSocketToStream(socketId, socket);
+        }, nextDelay);
       })
       .on('data', (data) => {
         // Reset the restart timer on each data event
@@ -141,7 +148,9 @@ class SpeechToTextService {
 
     this.recognizeStreams.set(socketId, {
       stream: recognizeStream,
-      socket: null, // Will be set when binding to socket
+      socket: null,
+      languageCode,
+      sampleRateHertz,
     });
 
     return recognizeStream;
@@ -175,10 +184,23 @@ class SpeechToTextService {
    * Process audio data
    */
   processAudio(socketId, data) {
-    const streamInfo = this.recognizeStreams.get(socketId);
+    let streamInfo = this.recognizeStreams.get(socketId);
     if (!streamInfo || !streamInfo.stream || !streamInfo.stream.writable) {
       console.error(`No valid stream found for socket ${socketId}`);
       return;
+    }
+
+    // Recreate the stream if the client's actual sample rate differs from what
+    // was configured — this happens on Macs where AudioContext defaults to 44100.
+    const incomingRate = data.sampleRate;
+    if (incomingRate && streamInfo.sampleRateHertz && incomingRate !== streamInfo.sampleRateHertz) {
+      console.log(`[STT] Sample rate mismatch (configured ${streamInfo.sampleRateHertz}, got ${incomingRate}) — recreating stream`);
+      const socket = streamInfo.socket;
+      const lang = streamInfo.languageCode || 'en-US';
+      this.createRecognizeStream(socketId, lang, incomingRate);
+      if (socket) this.bindSocketToStream(socketId, socket);
+      streamInfo = this.recognizeStreams.get(socketId);
+      if (!streamInfo || !streamInfo.stream) return;
     }
 
     try {
