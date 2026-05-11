@@ -1,6 +1,7 @@
 opencv-python
 mediapipe
-scikit-learn==1.2.0
+scikit-learn>=1.4.0
 flask
 flask-cors
 numpy
+kaggle

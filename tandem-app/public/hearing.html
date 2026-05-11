@@ -1,126 +1,194 @@
 <!doctype html>
 <html lang="en">
-
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Tandem — Hearing User</title>
+  <title>Tandem — Listening</title>
   <link rel="stylesheet" href="/style.css" />
-  <style>
-    .btn-icon {
-      width: 16px;
-      height: 16px;
-      display: block;
-      flex-shrink: 0;
-    }
-
-    .logo-icon {
-      width: 18px;
-      height: 18px;
-      display: block;
-    }
-  </style>
 </head>
-
 <body>
-  <div class="app-shell">
+<div class="call-shell">
 
-    <!-- Top Bar -->
-    <header class="topbar">
-      <a href="/" class="topbar-brand">
-        <div class="topbar-logo">
-          <!-- Waveform brand mark -->
-          <svg class="logo-icon" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round"
-            stroke-linejoin="round">
-            <path d="M2 12h3M5 7v10M9 4v16M13 9v6M17 6v12M21 12h-3" />
+  <!-- Header -->
+  <header class="call-header">
+    <a href="/" class="call-brand">
+      <div class="call-logo">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M2 12h3M5 7v10M9 4v16M13 9v6M17 6v12M21 12h-3"/>
+        </svg>
+      </div>
+      Tandem
+    </a>
+
+    <div class="call-status">
+      <div id="status-dot" class="status-dot waiting"></div>
+      <span id="status-text" class="call-status-text">Initializing…</span>
+    </div>
+
+    <div class="room-tag" id="roomTag" style="display:none">
+      Room <span id="roomTagCode"></span>
+    </div>
+
+    <span class="role-badge badge-hearing">Hearing</span>
+  </header>
+
+  <!-- Body -->
+  <div class="call-body">
+
+    <!-- Primary: deaf user's video -->
+    <div class="call-stage">
+      <video id="remoteVideo" autoplay playsinline></video>
+
+      <!-- Waiting state -->
+      <div class="stage-waiting" id="stageWaiting">
+        <div class="stage-waiting-avatar">
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.6-7 8-7s8 3 8 7"/>
           </svg>
         </div>
-        Tandem
-      </a>
-      <div class="topbar-status">
-        <div id="status-dot" class="status-dot waiting"></div>
-        <span id="status-text">Initializing…</span>
+        <p>Waiting for the deaf user…</p>
+        <div class="spinner"></div>
       </div>
-      <span class="topbar-badge badge-hearing">Hearing</span>
-    </header>
 
-    <!-- Controls -->
-    <div class="controls-bar">
-      <button id="toggleMic" class="ctrl-btn mic-on" title="Toggle microphone">
-        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" />
-          <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-          <line x1="12" y1="19" x2="12" y2="23" />
-          <line x1="8" y1="23" x2="16" y2="23" />
+      <div class="stage-scrim"></div>
+
+      <!-- PIP: your video -->
+      <div class="stage-pip" title="You">
+        <video id="localVideo" autoplay playsinline muted></video>
+      </div>
+
+      <!-- Your speech captions overlay -->
+      <div class="stage-info">
+        <div class="stage-caption-overlay" id="captionOverlay" style="display:none;">
+          <div class="stage-caption-dot"></div>
+          <span class="stage-caption-text" id="localCaptions">Speak — your words appear here…</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Sidebar: ASL interpretation -->
+    <aside class="call-sidebar">
+
+      <!-- Interpreted sentences -->
+      <div class="sidebar-panel" style="flex:1; min-height:0; display:flex; flex-direction:column;">
+        <div class="sidebar-panel-head">
+          <div class="sidebar-panel-dot dot-amber"></div>
+          <span class="sidebar-panel-title">Deaf user says</span>
+        </div>
+        <div class="interp-sentences" id="sentenceArea">
+          <p class="interp-placeholder">Signs will appear here as the deaf user signs to you.</p>
+        </div>
+        <div class="interp-chips" id="aslPredictionsList"></div>
+      </div>
+
+      <!-- Your speech captions in sidebar -->
+      <div class="sidebar-panel" style="flex-shrink:0;">
+        <div class="captions-pane" id="localSubtitleStrip">
+          <p class="captions-label">Your speech</p>
+          <p class="captions-text" id="localCaptionsSidebar">Speak — your words appear here…</p>
+        </div>
+      </div>
+
+    </aside>
+  </div>
+
+  <!-- Controls -->
+  <div class="call-controls">
+    <div class="ctrl-group">
+      <button id="toggleMic" class="ctrl-btn" title="Toggle mic">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+          <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
         </svg>
-        <span class="text">Mic</span>
+        Mic
       </button>
-      <button id="toggleCamera" class="ctrl-btn camera-on" title="Toggle camera">
-        <svg class="btn-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
-          stroke-linecap="round" stroke-linejoin="round">
-          <path d="M23 7l-7 5 7 5V7z" />
-          <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+      <button id="toggleCamera" class="ctrl-btn" title="Toggle camera">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M23 7l-7 5 7 5V7z"/>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
         </svg>
-        <span class="text">Camera</span>
+        Camera
       </button>
     </div>
 
-    <!-- Main Grid: Your Video | Deaf User Video | Detected Signs -->
-    <main class="content-grid two-col">
+    <div class="ctrl-divider"></div>
 
-      <!-- Column 1: Local (hearing user) video -->
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-dot rose"></div>
-          <span class="panel-title">You</span>
-        </div>
-        <div class="panel-body">
-          <video id="localVideo" autoplay playsinline muted></video>
-        </div>
-        <!-- STT subtitle strip — lets the hearing user validate what's being captured -->
-        <div class="subtitle-strip" id="localSubtitleStrip">
-          <span class="subtitle-label">🎤</span>
-          <span id="localCaptions" class="subtitle-text">Speak — your words appear here…</span>
-        </div>
-      </div>
+    <div class="ctrl-room">
+      Room&nbsp;<span class="ctrl-room-code" id="ctrlRoomCode">—</span>
+    </div>
 
-      <!-- Column 2: Remote (deaf user) video -->
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-dot teal"></div>
-          <span class="panel-title">Deaf User</span>
-        </div>
-        <div class="panel-body">
-          <video id="remoteVideo" autoplay playsinline></video>
-        </div>
-      </div>
+    <div class="ctrl-divider"></div>
 
-    </main>
-
-    <!-- Footer -->
-    <footer class="footer-bar">
-      <span>Speak normally — your words are captioned and signed to the deaf user</span>
-      <div id="aslPredictionsList" style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;"></div>
-    </footer>
-
+    <a href="/" class="ctrl-leave">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+        <polyline points="16 17 21 12 16 7"/>
+        <line x1="21" y1="12" x2="9" y2="12"/>
+      </svg>
+      Leave
+    </a>
   </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="/script.js" type="module"></script>
-  <script src="/hearing.js" type="module"></script>
-  <script>
-    const _statusText = document.getElementById('status-text');
-    const _dot = document.getElementById('status-dot');
-    new MutationObserver(() => {
-      const t = _statusText.textContent.toLowerCase();
-      _dot.className = 'status-dot ' + (
-        t.includes('wait') ? 'waiting' :
-          t.includes('connect') && !t.includes('error') ? 'connected' :
-            t.includes('error') ? 'error' : 'waiting'
-      );
-    }).observe(_statusText, { childList: true, characterData: true, subtree: true });
-  </script>
-</body>
+</div>
 
+<script>
+(function () {
+  const room = new URLSearchParams(window.location.search).get('room') || '';
+  if (room) {
+    const tag = document.getElementById('roomTag');
+    const tagCode = document.getElementById('roomTagCode');
+    const ctrl = document.getElementById('ctrlRoomCode');
+    if (tagCode) tagCode.textContent = room;
+    if (ctrl) ctrl.textContent = room;
+    if (tag) tag.style.display = 'flex';
+  }
+
+  // Show caption overlay after a moment (once mic is likely active)
+  setTimeout(() => {
+    const ov = document.getElementById('captionOverlay');
+    if (ov) ov.style.display = 'flex';
+  }, 2500);
+
+  // Hide waiting overlay once deaf user video plays
+  const remoteVid = document.getElementById('remoteVideo');
+  const waiting = document.getElementById('stageWaiting');
+  if (remoteVid && waiting) {
+    remoteVid.addEventListener('playing', () => {
+      waiting.style.opacity = '0';
+      waiting.style.transition = 'opacity 0.4s';
+      setTimeout(() => { waiting.style.display = 'none'; }, 400);
+    }, { once: true });
+  }
+
+  // Mirror captions to sidebar
+  const localCap = document.getElementById('localCaptions');
+  const sidebarCap = document.getElementById('localCaptionsSidebar');
+  if (localCap && sidebarCap) {
+    new MutationObserver(() => {
+      const txt = localCap.textContent || '';
+      sidebarCap.textContent = txt;
+      const live = txt.length > 0 && txt !== 'Speak — your words appear here…';
+      sidebarCap.classList.toggle('live', live);
+    }).observe(localCap, { childList: true, characterData: true, subtree: true });
+  }
+
+  // Status dot
+  const statusEl = document.getElementById('status-text');
+  const dotEl = document.getElementById('status-dot');
+  new MutationObserver(() => {
+    const t = (statusEl.textContent || '').toLowerCase();
+    dotEl.className = 'status-dot ' + (
+      t.includes('error') ? 'error' :
+      (t.includes('connect') && !t.includes('error')) ? 'connected' : 'waiting'
+    );
+  }).observe(statusEl, { childList: true, characterData: true, subtree: true });
+})();
+</script>
+
+<script src="/socket.io/socket.io.js"></script>
+<script src="/script.js" type="module"></script>
+<script src="/hearing.js" type="module"></script>
+</body>
 </html>

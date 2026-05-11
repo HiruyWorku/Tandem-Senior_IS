@@ -9,6 +9,9 @@
     "asl": "python server/asl_api.py",
     "start:all": "concurrently --kill-others-on-fail --names \"node,asl\" --prefix-colors \"cyan,green\" \"npm start\" \"npm run asl\"",
     "test": "node --test test/smoke.test.js",
+    "asl:download": "python asl/download_dataset.py",
+    "asl:collect": "python asl/collect.py",
+    "asl:train": "python asl/train.py",
     "docker:build": "docker build -t tandem-app .",
     "docker:run": "docker run --rm -p 3000:3000 --env-file .env -v \"$(pwd)/asl/model.p:/app/asl/model.p\" tandem-app"
   },

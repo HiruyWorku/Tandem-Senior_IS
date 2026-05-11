@@ -1,24 +1,193 @@
-// deaf.js - ASL Recognition for Deaf User
-// NOTE: showPillToast() is provided by script.js (loaded before this file).
+// deaf.js — ASL Recognition (v2)
+// MediaPipe Tasks HandLandmarker + temporal majority-vote + J/Z trajectory detector
 
-let lastASLPrediction = '';
-const aslHistory = [];
-const ASL_API_URL = '';
-
-// Word boundary detection — letters accumulate here until the user pauses.
-// 1.5 s of silence = word complete → flush to server for Claude interpretation.
-const wordBuffer = [];
-let wordBoundaryTimer = null;
+// ── Word-boundary config ────────────────────────────────────────────────────
 const WORD_BOUNDARY_MS = 1500;
 
+// ── Temporal smoothing config ───────────────────────────────────────────────
+const BUFFER_SIZE    = 7;
+const REQUIRED_VOTES = 5;
+const CONFIDENCE_MIN = 0.60;
+const FRAME_INTERVAL = 80;   // ms (~12 fps)
 
+// ── State ───────────────────────────────────────────────────────────────────
+const temporalBuffer  = [];
+const wordBuffer      = [];
+let wordBoundaryTimer = null;
+let lastAcceptedLetter = '';
+
+// ════════════════════════════════════════════════════════════════════════════
+// J / Z Trajectory Detector
+// ─────────────────────────────────────────────────────────────────────────────
+// J and Z are the only two ASL letters that require motion.  A static
+// single-frame model cannot distinguish them from similar static poses
+// (J looks like I mid-stroke; Z looks like a pointing gesture mid-stroke).
+//
+// This detector tracks the positions of the pinky tip (landmark 20, used for
+// J) and index tip (landmark 8, used for Z) across frames, normalised to
+// hand scale so it works regardless of camera distance.
+//
+// When motion stops it classifies the accumulated trajectory:
+//   J — pinky moved ≥ 0.25 hand-units downward with a rightward hook at end
+//   Z — index tip changed horizontal direction ≥ 2 times (zigzag pattern)
+//
+// False-positive reduction:
+//   • A minimum total path length is required before classifying.
+//   • The starting handshape must match: J requires the static model to have
+//     recently predicted "I" (same hand pose); Z requires a pointing-like
+//     letter (D, G, or pointing).
+//   • A 1.2-second cooldown prevents repeated triggering.
+// ════════════════════════════════════════════════════════════════════════════
+class JZDetector {
+  constructor() {
+    this._buf      = [];     // {pinky:{x,y}, index:{x,y}, staticPred, t}
+    this._moving   = false;
+    this._lastEmit = 0;
+    this._COOLDOWN = 1200;   // ms between J/Z emissions
+    this._MAX_BUF  = 30;     // ~2 s at 15 fps
+    // Velocity threshold (normalised hand-units per frame) to start/end motion
+    this._VEL_ON   = 0.035;
+    this._VEL_OFF  = 0.018;
+  }
+
+  // Call once per frame with the raw landmarks and the static model's current
+  // best prediction.  Returns 'J', 'Z', or null.
+  update(landmarks, staticPred) {
+    const w   = landmarks[0];
+    const mid = landmarks[9];  // middle finger MCP — used for scale
+    const scale = Math.hypot(mid.x - w.x, mid.y - w.y) || 0.01;
+
+    const norm = lm => ({
+      x: (lm.x - w.x) / scale,
+      y: (lm.y - w.y) / scale,
+    });
+
+    const frame = {
+      pinky:      norm(landmarks[20]),
+      index:      norm(landmarks[8]),
+      staticPred: staticPred || '',
+      t:          performance.now(),
+    };
+
+    this._buf.push(frame);
+    if (this._buf.length > this._MAX_BUF) this._buf.shift();
+
+    // Velocity over last 3 frames
+    const n   = this._buf.length;
+    const vel = n >= 4
+      ? Math.hypot(
+          frame.pinky.x - this._buf[n-4].pinky.x,
+          frame.pinky.y - this._buf[n-4].pinky.y,
+        )
+      : 0;
+
+    if (vel > this._VEL_ON) {
+      this._moving = true;
+      return null;
+    }
+
+    if (this._moving && vel < this._VEL_OFF) {
+      this._moving = false;
+      return this._classify();
+    }
+
+    return null;
+  }
+
+  _classify() {
+    const now = performance.now();
+    if (now - this._lastEmit < this._COOLDOWN) return null;
+
+    const pts   = this._buf;
+    const n     = pts.length;
+    if (n < 12) return null;
+
+    // ── J check ────────────────────────────────────────────────────────────
+    // Requires: started from an I-like pose AND pinky moved down + hook right
+    const startedAsI = pts.slice(0, Math.ceil(n/3))
+      .some(f => f.staticPred === 'I');
+
+    const pStart = pts[0].pinky;
+    const pEnd   = pts[n - 1].pinky;
+    const netDown  = pEnd.y - pStart.y;   // positive = downward in camera coords
+    const netRight = pEnd.x - pStart.x;
+
+    // Total path length (not just net displacement)
+    let pathLen = 0;
+    for (let i = 1; i < n; i++) {
+      pathLen += Math.hypot(
+        pts[i].pinky.x - pts[i-1].pinky.x,
+        pts[i].pinky.y - pts[i-1].pinky.y,
+      );
+    }
+
+    const hookAtEnd = (() => {
+      const late = pts.slice(Math.floor(n * 0.6));
+      const xR   = Math.max(...late.map(f => f.pinky.x))
+                 - Math.min(...late.map(f => f.pinky.x));
+      return xR > 0.12;
+    })();
+
+    if (startedAsI && netDown > 0.25 && pathLen > 0.3 && hookAtEnd) {
+      this._lastEmit = now;
+      this._buf      = [];
+      return 'J';
+    }
+
+    // ── Z check ────────────────────────────────────────────────────────────
+    // Requires: started from a pointing pose AND index tip made a zigzag
+    const POINTING = new Set(['D', 'G', 'L', 'Z', '1']);
+    const startedPointing = pts.slice(0, Math.ceil(n/3))
+      .some(f => POINTING.has(f.staticPred));
+
+    const zPattern = (() => {
+      const xs  = pts.map(f => f.index.x);
+      let changes = 0, lastDir = 0;
+      for (let i = 1; i < xs.length; i++) {
+        const d = xs[i] - xs[i - 1];
+        if (Math.abs(d) > 0.025) {
+          const dir = d > 0 ? 1 : -1;
+          if (lastDir !== 0 && dir !== lastDir) changes++;
+          lastDir = dir;
+        }
+      }
+      return changes >= 2;
+    })();
+
+    let indexPathLen = 0;
+    for (let i = 1; i < n; i++) {
+      indexPathLen += Math.hypot(
+        pts[i].index.x - pts[i-1].index.x,
+        pts[i].index.y - pts[i-1].index.y,
+      );
+    }
+
+    if (startedPointing && zPattern && indexPathLen > 0.35) {
+      this._lastEmit = now;
+      this._buf      = [];
+      return 'Z';
+    }
+
+    // Not J or Z — clear to avoid stale data affecting the next motion
+    this._buf = [];
+    return null;
+  }
+
+  reset() {
+    this._buf    = [];
+    this._moving = false;
+  }
+}
+
+const jzDetector = new JZDetector();
+let lastEmitTime       = 0;
+const MIN_SAME_LETTER_INTERVAL = 900; // ms — don't re-emit same letter too fast
+
+// ── Init ────────────────────────────────────────────────────────────────────
 (async function init() {
   try {
     const roomCode = new URLSearchParams(window.location.search).get('room');
-    if (!roomCode) {
-      window.location.href = '/';
-      return;
-    }
+    if (!roomCode) { window.location.href = '/'; return; }
 
     window.TandemApp.setStatus('Requesting camera and microphone…');
     await window.TandemApp.initMedia();
@@ -31,326 +200,249 @@ const WORD_BOUNDARY_MS = 1500;
 
     window.TandemApp.setStatus('Connecting to signaling server…');
     window.TandemApp.initSocket('deaf', roomCode);
-
     window.TandemApp.setStatus('Waiting for peer…');
 
-    // Listen for the hearing user’s TTS completion signal.
-    if (window.socket) {
-      window.socket.on('ttsSpoken', () => {
-        showPillToast('tandem-tts-toast', '🔊 Spoken', '#e9a84c');
-      });
-    } else {
-      const waitForSocket = setInterval(() => {
-        if (window.socket) {
-          clearInterval(waitForSocket);
-          window.socket.on('ttsSpoken', () => {
-            showPillToast('tandem-tts-toast', '🔊 Spoken', '#e9a84c');
-          });
-        }
-      }, 100);
+    // TTS spoken feedback
+    const attachTtsToast = () => {
+      if (window.socket) {
+        window.socket.on('ttsSpoken', () =>
+          showPillToast('tandem-tts-toast', '🔊 Spoken', '#e8a84c'));
+      }
+    };
+    attachTtsToast();
+    if (!window.socket) {
+      const t = setInterval(() => { if (window.socket) { clearInterval(t); attachTtsToast(); } }, 100);
     }
 
-    // Kick off ASL recognition. Await it so errors surface in the status badge.
     try {
       await initASL();
-    } catch (aslErr) {
-      console.error('[ASL] initASL failed:', aslErr);
-      const aslStatus = document.getElementById('aslStatus');
-      if (aslStatus) aslStatus.textContent = 'ASL: Error — ' + aslErr.message;
+    } catch (err) {
+      console.error('[ASL] initASL failed:', err);
+      const s = document.getElementById('aslStatus');
+      if (s) s.textContent = 'ASL error — ' + err.message;
     }
   } catch (err) {
     console.error(err);
-    window.TandemApp.setStatus('Error initializing application. Check console.');
+    window.TandemApp.setStatus('Error initializing. Check console.');
   }
 })();
 
+// ── Camera setup ─────────────────────────────────────────────────────────────
 async function initASL() {
   const aslStatus = document.getElementById('aslStatus');
-  const aslVideo = document.getElementById('aslVideo');
+  const aslVideo  = document.getElementById('aslVideo');
   const localVideo = document.getElementById('localVideo');
 
-  console.log('Initializing ASL recognition...');
-  if (aslStatus) aslStatus.textContent = 'ASL: Starting...';
+  if (aslStatus) aslStatus.textContent = 'Starting camera…';
 
-  // Reuse the camera stream that TandemApp already acquired.
-  // Wait up to 2 s for localVideo to have its stream (race with initMedia).
+  // Reuse the WebRTC stream (avoids a second getUserMedia)
   let waited = 0;
   while ((!localVideo || !localVideo.srcObject) && waited < 2000) {
     await new Promise(r => setTimeout(r, 100));
     waited += 100;
   }
 
-  if (localVideo && localVideo.srcObject) {
-    console.log('Using camera stream from TandemApp');
+  if (localVideo?.srcObject) {
     aslVideo.srcObject = localVideo.srcObject;
-    try { await aslVideo.play(); } catch (e) { console.warn('ASL video play:', e); }
+    try { await aslVideo.play(); } catch (_) {}
   } else {
-    // Fallback: request our own camera stream
-    console.log('No TandemApp stream — requesting own camera');
-    if (aslStatus) aslStatus.textContent = 'ASL: Requesting camera...';
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 640, height: 480, facingMode: 'user' }, audio: false,
+    });
     aslVideo.srcObject = stream;
     await aslVideo.play();
   }
 
-  console.log('Camera ready');
-  if (aslStatus) aslStatus.textContent = 'ASL: Loading model...';
+  // Wait for pixel data
+  if (aslVideo.readyState < 3) {
+    await new Promise(r => {
+      aslVideo.addEventListener('canplay', r, { once: true });
+      setTimeout(r, 5000);
+    });
+  }
+  let tries = 0;
+  while (aslVideo.videoWidth === 0 && tries++ < 50)
+    await new Promise(r => setTimeout(r, 100));
 
-  await loadMediaPipe();
-  console.log('MediaPipe loaded');
-  if (aslStatus) aslStatus.textContent = 'ASL: Ready — show your hand!';
+  if (aslVideo.videoWidth === 0) throw new Error('Camera produced no frames');
 
-  processVideo(aslVideo);
+  if (aslStatus) aslStatus.textContent = 'Loading hand detector…';
+  const detector = await loadHandLandmarker();
+  if (aslStatus) aslStatus.textContent = 'Show your hand';
+
+  startFrameLoop(aslVideo, detector, aslStatus);
 }
 
-function loadMediaPipe() {
-  return new Promise((resolve, reject) => {
-    if (typeof Hands !== 'undefined') {
-      console.log('Hands already loaded');
-      resolve();
-      return;
-    }
+// ── MediaPipe Tasks HandLandmarker ───────────────────────────────────────────
+async function loadHandLandmarker() {
+  // MediaPipe Tasks Vision — more accurate than the legacy 0.4 Hands solution.
+  // Uses a float16 quantised model (~8 MB) that runs well on CPU and GPU.
+  const VISION_CDN  = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm';
+  const WASM_PATH   = 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm';
+  const MODEL_URL   = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
 
-    console.log('Loading MediaPipe Hands...');
-    const script = document.createElement('script');
-    script.src = 'https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/hands.min.js';
-    script.onload = () => {
-      console.log('MediaPipe script loaded');
-      resolve();
-    };
-    script.onerror = (e) => {
-      console.error('Failed to load MediaPipe:', e);
-      reject(e);
-    };
-    document.head.appendChild(script);
+  const { HandLandmarker, FilesetResolver } = await import(VISION_CDN);
+
+  const vision = await FilesetResolver.forVisionTasks(WASM_PATH);
+
+  const handLandmarker = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: MODEL_URL,
+      delegate: 'GPU',         // falls back to CPU automatically
+    },
+    runningMode:               'VIDEO',
+    numHands:                  1,
+    minHandDetectionConfidence: 0.5,
+    minHandPresenceConfidence:  0.5,
+    minTrackingConfidence:      0.5,
   });
+
+  console.log('[ASL] HandLandmarker v2 ready');
+  return handLandmarker;
 }
 
-function processVideo(video) {
-  console.log('[ASL] Starting video processing');
-  const aslStatus = document.getElementById('aslStatus');
+// ── Frame loop ───────────────────────────────────────────────────────────────
+function startFrameLoop(video, detector, statusEl) {
+  let lastInferenceAt = 0;
 
-  async function waitForHands() {
-    // Give MediaPipe up to 30 s to fully initialise its WASM runtime.
-    let attempts = 0;
-    while (typeof Hands === 'undefined' && attempts < 300) {
-      await new Promise(r => setTimeout(r, 100));
-      attempts++;
-    }
-    return typeof Hands !== 'undefined';
+  function loop(timestamp) {
+    requestAnimationFrame(loop);
+
+    if (video.readyState < 2 || video.videoWidth === 0) return;
+    if (timestamp - lastInferenceAt < FRAME_INTERVAL) return;
+    lastInferenceAt = timestamp;
+
+    // detectForVideo is synchronous in VIDEO mode
+    const results = detector.detectForVideo(video, timestamp);
+    handleResults(results, statusEl);
   }
 
-  // Wait for the video to have actual pixel data before feeding frames.
-  async function waitForVideoReady() {
-    // Method 1: canplay event (fires when enough data to play)
-    if (video.readyState < 3) {
-      await new Promise(resolve => {
-        video.addEventListener('canplay', resolve, { once: true });
-        // Safety: also resolve after 5s so we don't hang forever
-        setTimeout(resolve, 5000);
-      });
-    }
-    // Method 2: ensure videoWidth is non-zero (real pixel data available)
-    let tries = 0;
-    while (video.videoWidth === 0 && tries < 50) {
-      await new Promise(r => setTimeout(r, 100));
-      tries++;
-    }
-    console.log(`[ASL] Video ready — readyState=${video.readyState}, ${video.videoWidth}×${video.videoHeight}`);
-    if (aslStatus) aslStatus.textContent = video.videoWidth > 0
-      ? 'ASL: Ready — show your hand!'
-      : `ASL: Camera not rendering (readyState=${video.readyState})`;
-  }
-
-  waitForHands().then(async handsLoaded => {
-    if (!handsLoaded) {
-      console.error('[ASL] MediaPipe Hands never loaded (WASM timeout)');
-      if (aslStatus) aslStatus.textContent = 'ASL: Error — MediaPipe timeout';
-      return;
-    }
-
-    console.log('[ASL] Hands loaded, waiting for video...');
-    await waitForVideoReady();
-
-    if (video.videoWidth === 0) {
-      console.error('[ASL] Video has no pixel data — cannot send frames');
-      if (aslStatus) aslStatus.textContent = 'ASL: Camera not ready (no frames)';
-      return;
-    }
-
-    const hands = new Hands({
-      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4.1646424915/${file}`
-    });
-
-    hands.setOptions({
-      maxNumHands: 1,
-      modelComplexity: 1,
-      minDetectionConfidence: 0.3,
-      minTrackingConfidence: 0.3
-    });
-
-    hands.onResults(onHandsResults);
-    console.log('[ASL] Hands instance ready, starting frame loop');
-
-    // Await each send so MediaPipe is never sent overlapping frames
-    // (causes dropped callbacks on the old 0.4.x runtime).
-    let sending = false;
-    async function sendFrame() {
-      if (!sending && video.readyState >= 2 && video.videoWidth > 0) {
-        sending = true;
-        try {
-          await hands.send({ image: video });
-        } catch (e) {
-          console.warn('[ASL] hands.send error:', e.message || e);
-        }
-        sending = false;
-      }
-      requestAnimationFrame(sendFrame);
-    }
-
-    sendFrame();
-    console.log('[ASL] Frame loop started');
-  });
+  requestAnimationFrame(loop);
 }
 
-
-
-async function onHandsResults(results) {
-  const aslStatus = document.getElementById('aslStatus');
-
-  if (!results.multiHandLandmarks || results.multiHandLandmarks.length === 0) {
-    // No hand in frame — update status indicator
-    if (aslStatus && !aslStatus.textContent.startsWith('ASL: Error')) {
-      aslStatus.textContent = 'ASL: Show your hand!';
-      aslStatus.style.color = 'var(--text-muted, #888)';
-    }
+// ── Result handling ──────────────────────────────────────────────────────────
+async function handleResults(results, statusEl) {
+  if (!results?.landmarks?.length) {
+    pushToTemporalBuffer(null);
+    jzDetector.reset();
+    if (statusEl) statusEl.textContent = 'Show your hand';
     return;
   }
 
-  // Hand is in frame
-  if (aslStatus) {
-    aslStatus.textContent = 'ASL: ✋ Detecting...';
-    aslStatus.style.color = 'var(--teal, #50e3c2)';
-  }
+  if (statusEl) statusEl.textContent = 'Detecting…';
 
-  const landmarks = results.multiHandLandmarks[0];
+  // Build flat [x0,y0,z0, x1,y1,z1, …, x20,y20,z20] (63 values)
+  const raw = results.landmarks[0];
+  const flat63 = [];
+  for (const lm of raw) flat63.push(lm.x, lm.y, lm.z);
 
-  // Extract features: normalised x, y per landmark — 42 features total.
-  // The Python model expects 84 features and pads the remaining 42 with zeros;
-  // this matches the format the model was trained on (x, y only, no z).
-  const features = [];
-  const xCoords = landmarks.map(l => l.x);
-  const yCoords = landmarks.map(l => l.y);
-  const minX = Math.min(...xCoords);
-  const minY = Math.min(...yCoords);
-
-  for (let i = 0; i < landmarks.length; i++) {
-    features.push(landmarks[i].x - minX);
-    features.push(landmarks[i].y - minY);
-  }
-
-  // Send landmarks to Python model via the Node.js /api/predict proxy.
+  // Call the Python prediction server
+  let prediction = null, confidence = 0, modelVersion = 1;
   try {
-    const resp = await fetch(`${ASL_API_URL}/api/predict`, {
-      method: 'POST',
+    const res = await fetch('/api/predict', {
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ features })
+      body:    JSON.stringify({ landmarks: flat63 }),
     });
-
-    if (resp.ok) {
-      const data = await resp.json();
-      console.log('[ASL] Prediction:', data.prediction, 'Confidence:', data.probability);
-
-      // Threshold lowered to 0.25 so more signs pass (model gets 63 features
-      // padded to 84; some accuracy loss is compensated by the lower bar).
-      if (data.prediction && data.probability > 0.25) {
-        showPrediction(data.prediction);
-        if (aslStatus) {
-          aslStatus.textContent = `ASL: ✓ ${data.prediction} (${Math.round(data.probability * 100)}%)`;
-          aslStatus.style.color = 'var(--teal, #50e3c2)';
-        }
-        return;
-      }
-    } else {
-      const err = await resp.json().catch(() => ({}));
-      console.warn('[ASL] API error:', resp.status, err.error || '');
+    if (res.ok) {
+      const d = await res.json();
+      prediction   = d.prediction   || null;
+      confidence   = d.confidence   ?? d.probability ?? 0;
+      modelVersion = d.model_version ?? 1;
     }
   } catch (e) {
-    console.warn('[ASL] API unreachable (is asl_api.py running via npm run start:all?):', e.message);
+    console.warn('[ASL] API unreachable:', e.message);
   }
 
-  // Fallback heuristic predictor
-  const pred = predictHeuristic(landmarks);
-  if (pred) {
-    showPrediction(pred);
-    if (aslStatus) {
-      aslStatus.textContent = `ASL: ~ ${pred} (heuristic)`;
-      aslStatus.style.color = '#e9a84c';
-    }
-  }
-}
-
-function predictHeuristic(landmarks) {
-  const tips = [4, 8, 12, 16, 20];
-  const bases = [2, 5, 9, 13, 17];
-  const fingers = [];
-
-  for (let i = 0; i < 5; i++) {
-    if (i === 0) {
-      fingers.push(landmarks[4].x > landmarks[2].x ? 1 : 0);
-    } else {
-      fingers.push(landmarks[tips[i]].y < landmarks[bases[i]].y ? 1 : 0);
-    }
-  }
-
-  const [t, i, m, r, p] = fingers;
-
-  if (!i && !m && !r && !p && t) return 'A';
-  if (!i && !m && !r && !p && !t) return 'S';
-  if (i && m && !r && !p && !t) return 'V';
-  if (i && !m && !r && !p && !t) return 'I';
-  if (!i && m && !r && !p && !t) return 'U';
-  if (i && m && r && !p && !t) return 'Y';
-  if (i && m && r && p && !t) return 'B';
-  if (i && m && r && p && t) return 'E';
-  if (!t && i && !m && !r && !p) return 'L';
-  if (!t && !i && m && !r && !p) return 'W';
-
-  return null;
-}
-
-function showPrediction(prediction) {
-  if (prediction === lastASLPrediction) return;
-
-  const now = Date.now();
-  if (aslHistory.length > 0 && now - aslHistory[aslHistory.length - 1].time < 700) {
+  // ── J / Z trajectory detector (runs every frame, parallel to static model) ─
+  // Pass the static model's best guess so the detector can validate starting poses.
+  const jzResult = jzDetector.update(raw, prediction);
+  if (jzResult) {
+    // Clear the temporal buffer so a stale static vote doesn't immediately
+    // overwrite the J/Z result.
+    temporalBuffer.length = 0;
+    onAcceptedLetter(jzResult, 1.0, modelVersion, statusEl);
     return;
   }
 
-  lastASLPrediction = prediction;
-  aslHistory.push({ prediction, time: now });
+  // ── Temporal majority-vote buffer (static letters) ────────────────────────
+  const vote     = (prediction && confidence >= CONFIDENCE_MIN) ? prediction : null;
+  const accepted = pushToTemporalBuffer(vote);
 
-  console.log('Signing:', prediction);
+  if (accepted) {
+    onAcceptedLetter(accepted, confidence, modelVersion, statusEl);
+  } else if (statusEl) {
+    const pct = Math.round(confidence * 100);
+    statusEl.textContent = prediction
+      ? `${prediction} (${pct}%) — stabilising…`
+      : 'Show your hand';
+  }
+}
 
-  // Update the local prediction chip with the current letter.
-  const el = document.getElementById('aslPrediction');
-  if (el) el.textContent = prediction;
+// Returns the majority-vote winner, or null if not enough consensus yet.
+function pushToTemporalBuffer(vote) {
+  temporalBuffer.push(vote);
+  if (temporalBuffer.length > BUFFER_SIZE) temporalBuffer.shift();
+  if (temporalBuffer.length < BUFFER_SIZE) return null;
 
-  // Accumulate into the word buffer and reset the boundary timer.
-  wordBuffer.push(prediction);
+  // Count non-null votes
+  const counts = {};
+  for (const v of temporalBuffer) {
+    if (v !== null) counts[v] = (counts[v] || 0) + 1;
+  }
+
+  let winner = null, top = 0;
+  for (const [k, n] of Object.entries(counts)) {
+    if (n > top) { top = n; winner = k; }
+  }
+
+  return top >= REQUIRED_VOTES ? winner : null;
+}
+
+// ── Letter accepted by temporal filter ──────────────────────────────────────
+function onAcceptedLetter(letter, confidence, modelVersion, statusEl) {
+  const now = Date.now();
+
+  // Don't re-emit the same letter faster than MIN_SAME_LETTER_INTERVAL
+  if (letter === lastAcceptedLetter && now - lastEmitTime < MIN_SAME_LETTER_INTERVAL) {
+    if (statusEl) {
+      statusEl.textContent = `✓ ${letter} (${Math.round(confidence*100)}%)`;
+    }
+    return;
+  }
+
+  lastAcceptedLetter = letter;
+  lastEmitTime       = now;
+
+  // Update hero display
+  const predEl = document.getElementById('aslPrediction');
+  if (predEl) predEl.textContent = letter;
+
+  if (statusEl) {
+    const src = modelVersion >= 2 ? 'MLP' : 'RF';
+    statusEl.textContent = `✓ ${letter} · ${Math.round(confidence*100)}% · ${src}`;
+  }
+
+  // Accumulate into word buffer
+  wordBuffer.push(letter);
   updateWordBufferDisplay();
 
+  // Update footer history
+  const histEl = document.getElementById('aslHistoryLine');
+  if (histEl) histEl.textContent = wordBuffer.join('·');
+
+  // Reset/start the word-boundary timer
   clearTimeout(wordBoundaryTimer);
   wordBoundaryTimer = setTimeout(flushWordBuffer, WORD_BOUNDARY_MS);
 }
 
+// ── Word display ─────────────────────────────────────────────────────────────
 function updateWordBufferDisplay() {
   const el = document.getElementById('aslPrediction');
-  if (el && wordBuffer.length > 0) {
-    el.textContent = wordBuffer.join('·');
-  }
+  if (el && wordBuffer.length > 0) el.textContent = wordBuffer.join('·');
 }
 
+// ── Word flush → Claude ──────────────────────────────────────────────────────
 function flushWordBuffer() {
   if (wordBuffer.length === 0) return;
 
@@ -360,16 +452,12 @@ function flushWordBuffer() {
   const el = document.getElementById('aslPrediction');
   if (el) el.textContent = '…';
 
-  console.log('[word] flushing:', letters);
+  const histEl = document.getElementById('aslHistoryLine');
+  if (histEl) histEl.textContent = '';
 
-  if (window.socket && window.socket.connected) {
+  console.log('[word] → Claude:', letters.join('-'));
+
+  if (window.socket?.connected) {
     window.socket.emit('aslWord', { letters });
   }
-}
-
-// Also update the history display in the footer.
-function updateHistoryLine() {
-  const histEl = document.getElementById('aslHistoryLine');
-  if (!histEl) return;
-  histEl.textContent = aslHistory.slice(-8).map(h => h.prediction).join(' ');
 }

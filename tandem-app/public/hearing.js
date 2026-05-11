@@ -56,31 +56,23 @@ function renderASLDisplay() {
 }
 
 function renderSentenceHistory() {
-  let panel = document.getElementById('aslSentencePanel');
-  if (!panel) {
-    panel = document.createElement('div');
-    panel.id = 'aslSentencePanel';
-    panel.style.cssText = [
-      'position:fixed', 'bottom:72px', 'left:50%',
-      'transform:translateX(-50%)',
-      'background:rgba(10,14,30,0.95)',
-      'border:1px solid rgba(80,227,194,0.3)',
-      'border-radius:12px', 'padding:12px 20px',
-      'max-width:560px', 'width:90%',
-      'font-size:1rem', 'font-weight:500',
-      'color:#e2e8f0', 'line-height:1.5',
-      'z-index:100', 'text-align:center',
-      'box-shadow:0 0 24px rgba(80,227,194,0.12)',
-    ].join(';');
-    document.body.appendChild(panel);
+  const area = document.getElementById('sentenceArea');
+  if (!area) return;
+
+  if (sentenceHistory.length === 0) {
+    area.innerHTML = '<p style="font-size:12.5px; color:var(--text-3); text-align:center; padding:16px 0;">ASL signs will appear here when the deaf user signs.</p>';
+    return;
   }
 
-  panel.innerHTML = sentenceHistory
+  area.innerHTML = sentenceHistory
     .map((s, i) => {
-      const opacity = 0.4 + (i / sentenceHistory.length) * 0.6;
-      return `<div style="opacity:${opacity.toFixed(2)};margin-bottom:2px">${s}</div>`;
+      const isLatest = i === sentenceHistory.length - 1;
+      return `<div class="interp-sentence${isLatest ? '' : ' faded'}">${s}</div>`;
     })
     .join('');
+
+  // Scroll to bottom so latest sentence is always visible
+  area.scrollTop = area.scrollHeight;
 }
 
 

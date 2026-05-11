@@ -562,15 +562,7 @@ function toggleMic() {
     isMicOn = !isMicOn;
     audioTracks[0].enabled = isMicOn;
 
-    if (isMicOn) {
-      toggleMicBtn.classList.remove('mic-off');
-      toggleMicBtn.classList.add('mic-on');
-      toggleMicBtn.querySelector('.text').textContent = 'Unmute';
-    } else {
-      toggleMicBtn.classList.remove('mic-on');
-      toggleMicBtn.classList.add('mic-off');
-      toggleMicBtn.querySelector('.text').textContent = 'Mute';
-    }
+    toggleMicBtn.classList.toggle('active-off', !isMicOn);
 
     console.log(`[client] Microphone ${isMicOn ? 'unmuted' : 'muted'}`);
   }
@@ -584,15 +576,8 @@ function toggleCamera() {
     isCameraOn = !isCameraOn;
     videoTracks[0].enabled = isCameraOn;
 
-    if (isCameraOn) {
-      toggleCameraBtn.classList.remove('camera-off');
-      toggleCameraBtn.classList.add('camera-on');
-      if (localVideo) localVideo.style.opacity = '1';
-    } else {
-      toggleCameraBtn.classList.remove('camera-on');
-      toggleCameraBtn.classList.add('camera-off');
-      if (localVideo) localVideo.style.opacity = '0.5';
-    }
+    toggleCameraBtn.classList.toggle('active-off', !isCameraOn);
+    if (localVideo) localVideo.style.opacity = isCameraOn ? '1' : '0.5';
 
     console.log(`[client] Camera turned ${isCameraOn ? 'on' : 'off'}`);
   }
@@ -600,10 +585,6 @@ function toggleCamera() {
 
 function setupMediaControls() {
   if (!toggleMicBtn || !toggleCameraBtn) return;
-
-  toggleMicBtn.classList.add('mic-on');
-  toggleCameraBtn.classList.add('camera-on');
-
   toggleMicBtn.addEventListener('click', toggleMic);
   toggleCameraBtn.addEventListener('click', toggleCamera);
 }

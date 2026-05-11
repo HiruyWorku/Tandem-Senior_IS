@@ -108,8 +108,13 @@ docs/_build/
 *.p
 *.pickle
 *.pkl
+*.npz
 model.json
 data.pickle
+
+# ── Downloaded datasets ────────────────────────
+tandem-app/asl/kaggle_download/
+tandem-app/asl/data_v2/
 
 # ── Secrets ───────────────────────────────────
 # Real .env values must never be committed.

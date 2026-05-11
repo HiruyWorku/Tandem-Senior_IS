@@ -1,32 +1,35 @@
-/* avatar.css — Signing avatar panel, inherits Tandem design tokens */
+/* avatar.css — Signing avatar, Tandem Warm Signal design system */
 
 #avatar-panel {
   display: flex;
   flex-direction: column;
   height: 100%;
   overflow: hidden;
+  background: #050504;
 }
 
-/* Header hidden — the parent panel-header already labels the column */
-#avatar-header {
-  display: none;
-}
+#avatar-header { display: none; }
 
 #avatar-controls {
   display: flex;
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
-  padding: 6px 10px;
-  border-bottom: 1px solid var(--border, rgba(255, 255, 255, 0.07));
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border, rgba(255,242,220,0.055));
   flex-shrink: 0;
+  background: var(--bg-2, #131210);
 }
 
 #avatar-status {
   font-size: 11px;
-  color: var(--text-muted, #6b7a94);
-  padding: 3px 10px;
+  color: var(--text-2, #9b9186);
+  padding: 5px 12px;
   flex-shrink: 0;
+  text-align: center;
+  background: var(--bg-2, #131210);
+  border-bottom: 1px solid var(--border, rgba(255,242,220,0.055));
+  font-style: italic;
 }
 
 pose-viewer {
@@ -34,21 +37,21 @@ pose-viewer {
   display: block;
   width: 100%;
   min-height: 0;
-  background: #06090e;
+  background: #050504;
 }
 
 .select {
-  background: var(--bg-3, #111827);
-  color: var(--text, #e8edf5);
-  border: 1px solid var(--border-2, rgba(255, 255, 255, 0.12));
-  border-radius: var(--radius-sm, 8px);
-  padding: 5px 8px;
-  font-family: inherit;
-  font-size: 12px;
-  transition: border-color 0.2s;
+  background: var(--surface-2, #272420);
+  color: var(--text, #ede9e1);
+  border: 1px solid var(--border-2, rgba(255,242,220,0.10));
+  border-radius: var(--r-xs, 4px);
+  padding: 4px 8px;
+  font-family: 'DM Sans', sans-serif;
+  font-size: 11.5px;
+  transition: border-color 0.15s;
 }
 
 .select:focus {
   outline: none;
-  border-color: var(--teal, #4ecca3);
+  border-color: var(--amber, #e8a84c);
 }
