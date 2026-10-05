@@ -1,0 +1,375 @@
+const { test, expect } = require('@playwright/test');
+const { createApplication } = require('../../server');
+const path = require('node:path');
+const fs = require('node:fs');
+let application;
+let baseURL;
+test.beforeAll(async () => {
+  application = createApplication({ env: { REQUIRE_ROOM_TOKEN: 'false' } });
+  await new Promise(resolve => application.server.listen(0, '127.0.0.1', resolve));
+  baseURL = `http://127.0.0.1:${application.server.address().port}`;
+});
+test.afterAll(async () => application.close());
+
+async function pair(browser, options = {}) {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ...options });
+  // Keep these tests independent of optional remote font/CDN availability.
+  await context.route(/https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com)\//, route => route.abort());
+  const errors = [];
+  context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
+  const a = await context.newPage(); const b = await context.newPage();
+  const room = Math.random().toString(36).slice(2, 10).toUpperCase();
+  await a.goto(`${baseURL}/deaf.html?room=${room}`);
+  await b.goto(`${baseURL}/hearing.html?room=${room}`);
+  await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+  await expect(b.locator('#replyStatus')).toHaveText('Ready to send.');
+  return { context, a, b, errors, room };
+}
+
+test('two users connect with synthetic video and exchange literal text in both directions', async ({ browser }) => {
+  const f = await pair(browser);
+  try {
+    await expect.poll(() => f.b.locator('#remoteVideo').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+    await expect(f.b.locator('#stageWaiting')).toBeHidden();
+    await expect(f.a.locator('#captionStatus')).toContainText('unavailable');
+    await expect(f.a.locator('#avatarSection')).toBeHidden();
+    await expect(f.a.locator('#replySpeak')).toBeDisabled();
+    const text = '<img src=x onerror=alert(1)> مرحبا 👋';
+    await f.a.locator('#replyText').fill(text);
+    await f.a.locator('#replyText').press('Enter');
+    await expect(f.b.locator('.conversation-text')).toHaveText(text);
+    await expect(f.b.locator('#conversationLog img')).toHaveCount(0);
+    await f.b.locator('#replyText').fill('Hello back!');
+    await f.b.locator('#replySend').click();
+    await expect(f.a.locator('.conversation-text').last()).toHaveText('Hello back!');
+    expect(f.errors).toEqual([]);
+  } finally { await f.context.close(); }
+});
+
+test('permission denial leaves typed replies usable', async ({ browser }) => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    navigator.mediaDevices.getUserMedia = async () => { throw new DOMException('Denied', 'NotAllowedError'); };
+  });
+  const a = await context.newPage(); const b = await context.newPage();
+  try {
+    await a.goto(`${baseURL}/deaf.html?room=DENIED`);
+    await b.goto(`${baseURL}/hearing.html?room=DENIED`);
+    await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await a.locator('#replyText').fill('Camera access is optional for this reply.');
+    await a.locator('#replySend').click();
+    await expect(b.locator('.conversation-text')).toHaveText('Camera access is optional for this reply.');
+  } finally { await context.close(); }
+});
+
+test('peer departure preserves drafts; a replacement peer can connect', async ({ browser }) => {
+  const f = await pair(browser);
+  try {
+    await f.a.locator('#replyText').fill('Keep this draft');
+    await f.b.close();
+    await expect(f.a.locator('#replyStatus')).toContainText('Your peer left');
+    await expect(f.a.locator('#replyText')).toHaveValue('Keep this draft');
+    await expect(f.a.locator('#replySend')).toBeDisabled();
+    const replacement = await f.context.newPage();
+    await replacement.goto(`${baseURL}/hearing.html?room=${f.room}`);
+    await expect(f.a.locator('#replySend')).toBeEnabled();
+    await f.a.locator('#replySend').click();
+    await expect(replacement.locator('.conversation-text')).toHaveText('Keep this draft');
+    await expect.poll(() => replacement.locator('#remoteVideo').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+    expect(f.errors).toEqual([]);
+  } finally { await f.context.close(); }
+});
+
+test('desktop and mobile replies fit the viewport with long content', async ({ browser }) => {
+  const f = await pair(browser);
+  const directory = path.resolve(__dirname, '../../../.impeccable/review');
+  fs.mkdirSync(directory, { recursive: true });
+  try {
+    await f.a.locator('#replyText').fill('A'.repeat(1000));
+    await f.a.locator('#replySend').click();
+    await expect(f.b.locator('.conversation-text')).toHaveText('A'.repeat(1000));
+    await expect(f.b.locator('#stageWaiting')).toBeHidden();
+    await f.b.screenshot({ path: path.join(directory, 'desktop.png'), fullPage: true });
+    for (const page of [f.a, f.b]) {
+      await page.setViewportSize({ width: 390, height: 844 });
+      await expect(page.locator('#replyText')).toBeVisible();
+      const fits = await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth);
+      expect(fits).toBe(true);
+      for (const selector of ['#replyText', '#replySend', '.ctrl-leave', '.role-badge', '.stage-pip']) {
+        const bounds = await page.locator(selector).boundingBox();
+        expect(bounds.x, selector).toBeGreaterThanOrEqual(0);
+        expect(bounds.x + bounds.width, selector).toBeLessThanOrEqual(391);
+      }
+    }
+    await f.a.locator('#replyText').fill('A clear reply, ready for review.');
+    await f.b.screenshot({ path: path.join(directory, 'mobile.png'), fullPage: true });
+    await f.a.screenshot({ path: path.join(directory, 'mobile-signing.png'), fullPage: true });
+    expect(f.errors).toEqual([]);
+  } finally { await f.context.close(); }
+});
+
+test('optional speech attaches native playback to a confirmed reply without autoplay', async ({ browser }) => {
+  // A short synthetic WAV exercises browser decoding without any paid provider.
+  const wav = Buffer.alloc(44 + 1600);
+  wav.write('RIFF'); wav.writeUInt32LE(wav.length - 8, 4); wav.write('WAVEfmt ', 8);
+  wav.writeUInt32LE(16, 16); wav.writeUInt16LE(1, 20); wav.writeUInt16LE(1, 22);
+  wav.writeUInt32LE(8000, 24); wav.writeUInt32LE(16000, 28);
+  wav.writeUInt16LE(2, 32); wav.writeUInt16LE(16, 34); wav.write('data', 36); wav.writeUInt32LE(1600, 40);
+  const app = createApplication({ env: { REQUIRE_ROOM_TOKEN: 'false', ENABLE_SPEECH: 'true' },
+    speech: { bindSocketToStream() {}, processAudio() {}, cleanup() {} },
+    synthesize: async () => wav.toString('base64') });
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  const url = `http://127.0.0.1:${app.server.address().port}`;
+  const context = await browser.newContext();
+  const a = await context.newPage(); const b = await context.newPage();
+  const errors = []; a.on('pageerror', error => errors.push(error.message)); b.on('pageerror', error => errors.push(error.message));
+  try {
+    await a.goto(`${url}/deaf.html?room=SPOKEN`); await b.goto(`${url}/hearing.html?room=SPOKEN`);
+    await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await a.locator('#replyText').fill('Speak this reviewed reply.'); await a.locator('#replySpeak').check();
+    await a.locator('#replySend').click();
+    const audio = b.getByLabel('Listen to this reply');
+    await expect(audio).toBeVisible();
+    expect(await audio.evaluate(element => element.paused)).toBe(true);
+    await audio.evaluate(element => element.play());
+    await expect.poll(() => audio.evaluate(element => element.ended)).toBe(true);
+    await expect(a.locator('#tandem-tts-toast')).toContainText('Spoken');
+    expect(errors).toEqual([]);
+  } finally { await context.close(); await app.close(); }
+});
+
+async function captionApp({ failProvider = false } = {}) {
+  const { EventEmitter } = require('node:events');
+  const { SpeechToTextService } = require('../../server/speechToText');
+  const records = [];
+  let failed = false;
+  const client = { streamingRecognize() {
+    const stream = new EventEmitter(); stream.writable = true; stream.bytes = 0; stream.chunks = 0;
+    stream.destroy = () => { stream.destroyed = true; stream.emit('end'); };
+    stream.write = buffer => {
+      stream.bytes += buffer.length; stream.chunks++;
+      if (stream.chunks === 1) queueMicrotask(() => {
+        if (failProvider && !failed) {
+          failed = true; const error = new Error('synthetic outage'); error.code = 14; stream.emit('error', error);
+        } else stream.emit('data', { results: [{ isFinal: true, alternatives: [{ transcript: 'Synthetic caption result.' }] }] });
+      });
+      return true;
+    };
+    records.push(stream); return stream;
+  } };
+  const speech = new SpeechToTextService({ client });
+  if (failProvider) speech.MAX_FAILURE_MS = 0;
+  const app = createApplication({ env: { REQUIRE_ROOM_TOKEN: 'false', ENABLE_SPEECH: 'true' }, speech });
+  await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+  return { app, records, speech, url: `http://127.0.0.1:${app.server.address().port}` };
+}
+
+async function captionPair(browser, f, script) {
+  const context = await browser.newContext();
+  if (script) await context.addInitScript(script);
+  const a = await context.newPage(); const b = await context.newPage();
+  const errors = []; a.on('pageerror', error => errors.push(error.message)); b.on('pageerror', error => errors.push(error.message));
+  await a.goto(`${f.url}/deaf.html?room=CAPTIONS`); await b.goto(`${f.url}/hearing.html?room=CAPTIONS`);
+  await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+  return { context, a, b, errors };
+}
+
+test('real AudioWorklet sends binary PCM, mute stops transmission, and unmute keeps video live', async ({ browser }) => {
+  const f = await captionApp(); const pages = await captionPair(browser, f);
+  try {
+    if (await pages.b.locator('#captionAction').textContent() === 'Start captions') await pages.b.locator('#captionAction').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+    await expect(pages.a.locator('#peerCaptionStatus')).toHaveText('Peer captions on');
+    await expect(pages.a.locator('#remoteCaptions')).toHaveText('Synthetic caption result.');
+    await expect(pages.a.locator('.conversation-text')).toContainText(['Synthetic caption result.']);
+    expect(f.records.some(stream => stream.bytes > 0 && stream.bytes % 2048 === 0)).toBe(true);
+    await pages.b.locator('#toggleMic').click();
+    await expect(pages.b.locator('#captionStatus')).toContainText('Microphone off');
+    await expect(pages.a.locator('#peerCaptionStatus')).toHaveText('Peer captions paused');
+    const bytes = f.records.reduce((sum, stream) => sum + stream.bytes, 0);
+    // Other peer remains active; measure only this muted peer's recognizer after pause.
+    const ownStreams = f.records.filter(stream => stream.destroyed);
+    const ownBytes = ownStreams.reduce((sum, stream) => sum + stream.bytes, 0);
+    await pages.b.waitForTimeout(180);
+    expect(ownStreams.reduce((sum, stream) => sum + stream.bytes, 0)).toBe(ownBytes);
+    expect(bytes).toBeGreaterThan(0);
+    expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getVideoTracks()[0].readyState)).toBe('live');
+    await pages.b.locator('#toggleMic').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+    await expect(pages.a.locator('#peerCaptionStatus')).toHaveText('Peer captions on');
+    const directory = path.resolve(__dirname, '../../../.impeccable/review');
+    fs.mkdirSync(directory, { recursive: true });
+    await pages.b.screenshot({ path: path.join(directory, 'captions-desktop.png'), fullPage: true });
+    await pages.b.setViewportSize({ width: 390, height: 844 });
+    await pages.b.evaluate(async () => {
+      await document.fonts.ready;
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      document.querySelectorAll('video').forEach(video => video.pause());
+    });
+    await pages.b.waitForTimeout(250);
+    await pages.b.screenshot({ path: path.join(directory, 'captions-mobile.png'), fullPage: true, animations: 'disabled' });
+    for (const selector of ['#captionAction', '#replyText', '#replySend', '.ctrl-leave']) {
+      const bounds = await pages.b.locator(selector).boundingBox();
+      expect(bounds.x, selector).toBeGreaterThanOrEqual(0);
+      expect(bounds.x + bounds.width, selector).toBeLessThanOrEqual(391);
+    }
+    expect(pages.errors).toEqual([]);
+  } finally { await pages.context.close(); await f.app.close(); }
+});
+
+test('caption pause is independent of microphone and provider retry does not stop call tracks', async ({ browser }) => {
+  const f = await captionApp({ failProvider: true }); const pages = await captionPair(browser, f);
+  try {
+    const failed = await pages.a.locator('#captionAction').isVisible() && await pages.a.locator('#captionAction').textContent() === 'Retry captions'
+      ? pages.a : pages.b;
+    await expect(failed.locator('#captionAction')).toHaveText('Retry captions');
+    await failed.locator('#captionAction').click();
+    await expect(failed.locator('#captionStatus')).toHaveText('Your captions on');
+    await failed.locator('#captionAction').click();
+    await expect(failed.locator('#captionStatus')).toHaveText('Your captions paused');
+    const video = failed === pages.a ? '#localVideo' : '#localVideo';
+    expect(await failed.locator(video).evaluate(element => element.srcObject.getAudioTracks()[0].enabled)).toBe(true);
+    expect(await failed.locator(video).evaluate(element => element.srcObject.getVideoTracks()[0].readyState)).toBe('live');
+    await failed.locator('#captionAction').click();
+    await expect(failed.locator('#captionStatus')).toHaveText('Your captions on');
+    expect(pages.errors).toEqual([]);
+  } finally { await pages.context.close(); await f.app.close(); }
+});
+
+test('worklet setup failure can retry while shared camera/microphone tracks stay live', async ({ browser }) => {
+  const f = await captionApp();
+  const pages = await captionPair(browser, f, () => {
+    const Original = window.AudioWorkletNode; let once = false;
+    window.AudioWorkletNode = new Proxy(Original, { construct(target, args) {
+      if (!once) { once = true; throw new Error('synthetic worklet load failure'); }
+      return Reflect.construct(target, args);
+    } });
+  });
+  try {
+    await expect(pages.b.locator('#captionAction')).toHaveText('Retry captions');
+    expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live'))).toBe(true);
+    await pages.b.locator('#captionAction').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+    expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live'))).toBe(true);
+    expect(pages.errors).toEqual([]);
+  } finally { await pages.context.close(); await f.app.close(); }
+});
+
+test('a third browser receives an actionable full-room state and keeps its draft', async ({ browser }) => {
+  const f = await pair(browser);
+  try {
+    const third = await f.context.newPage(); await third.goto(`${baseURL}/hearing.html?room=${f.room}`);
+    await expect(third.locator('#replyStatus')).toContainText('already has two people');
+    await third.locator('#replyText').fill('Keep this until a room is available');
+    await expect(third.locator('#replySend')).toBeDisabled();
+    await expect(third.locator('#replyText')).toHaveValue('Keep this until a room is available');
+    expect(f.errors).toEqual([]);
+  } finally { await f.context.close(); }
+});
+
+test('transport loss and reconnection preserve an edited draft and restore video', async ({ browser }) => {
+  const f = await pair(browser);
+  try {
+    await f.a.locator('#replyText').fill('Draft survives a reconnect');
+    const initialId = await f.a.evaluate(() => window.socket.id);
+    await f.a.evaluate(() => window.socket.io.engine.close());
+    await expect.poll(() => f.a.evaluate(() => window.socket.id)).not.toBe(initialId);
+    await expect(f.a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await expect(f.a.locator('#replyText')).toHaveValue('Draft survives a reconnect');
+    await expect(f.a.locator('#replySend')).toBeEnabled();
+    await f.a.locator('#replySend').click();
+    await expect(f.b.locator('.conversation-text')).toHaveText('Draft survives a reconnect');
+    await expect.poll(() => f.b.locator('#remoteVideo').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+    expect(f.errors).toEqual([]);
+  } finally { await f.context.close(); }
+});
+
+test('unsupported capture still admits callers and exchanges typed replies', async ({ browser }) => {
+  const f = await captionApp();
+  const pages = await captionPair(browser, f, () => { window.AudioWorkletNode = undefined; });
+  try {
+    await expect(pages.a.locator('#captionStatus')).toContainText('unsupported');
+    await expect(pages.a.locator('#captionAction')).toBeHidden();
+    await pages.a.locator('#replyText').fill('Text works without worklet support.'); await pages.a.locator('#replySend').click();
+    await expect(pages.b.locator('.conversation-text')).toHaveText('Text works without worklet support.');
+    expect(f.records.length).toBe(0);
+    expect(pages.errors).toEqual([]);
+  } finally { await pages.context.close(); await f.app.close(); }
+});
+
+test('server restart preserves page drafts, readmits callers, and restores video', async ({ browser }) => {
+  const f = await pair(browser);
+  const port = application.server.address().port;
+  try {
+    await f.a.locator('#replyText').fill('Draft survives a server restart');
+    const before = await f.a.evaluate(() => window.socket.id);
+    await application.close();
+    application = createApplication({ env: { REQUIRE_ROOM_TOKEN: 'false' } });
+    await new Promise(resolve => application.server.listen(port, '127.0.0.1', resolve));
+    await expect.poll(() => f.a.evaluate(id => window.socket.connected && window.socket.id !== id, before)).toBe(true);
+    await expect(f.a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await expect(f.a.locator('#replyText')).toHaveValue('Draft survives a server restart');
+    await f.a.locator('#replySend').click();
+    await expect(f.b.locator('.conversation-text')).toHaveText('Draft survives a server restart');
+    await expect.poll(() => f.b.locator('#remoteVideo').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+    expect(f.errors).toEqual([]);
+  } finally { await f.context.close(); }
+});
+
+test('short desktop sidebars can scroll the reply action into view', async ({ browser }) => {
+  const f = await pair(browser, { viewport: { width: 1280, height: 720 } });
+  try {
+    await f.b.locator('#replyText').fill('A reply from a shorter screen.');
+    await f.b.locator('#replySend').scrollIntoViewIfNeeded();
+    const bounds = await f.b.locator('#replySend').boundingBox();
+    expect(bounds.y).toBeGreaterThanOrEqual(0);
+    expect(bounds.y + bounds.height).toBeLessThanOrEqual(720);
+    await f.b.locator('#replySend').click();
+    await expect(f.a.locator('.conversation-text')).toHaveText('A reply from a shorter screen.');
+    expect(f.errors).toEqual([]);
+  } finally { await f.context.close(); }
+});
+
+test('scheduled ICE renewal and simultaneous restart keep shared tracks and typed replies live', async ({ browser }) => {
+  const context = await browser.newContext();
+  await context.route(/https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com)\//, route => route.abort());
+  await context.route('**/ice-config', route => route.fulfill({ status: 200, contentType: 'application/json',
+    headers: { 'X-Turn-Expires-At': String(Math.ceil(Date.now() / 1000) + 4) },
+    body: JSON.stringify([{ urls: 'stun:stun.l.google.com:19302' }]) }));
+  await context.addInitScript(() => {
+    window.renewedConfigurations = 0;
+    window.peerConnections = [];
+    const original = RTCPeerConnection.prototype.setConfiguration;
+    RTCPeerConnection.prototype.setConfiguration = function(config) {
+      window.renewedConfigurations++; return original.call(this, config);
+    };
+    const Constructor = RTCPeerConnection;
+    window.RTCPeerConnection = new Proxy(Constructor, { construct(target, args) {
+      const connection = Reflect.construct(target, args); window.peerConnections.push(connection); return connection;
+    } });
+  });
+  const errors = [];
+  context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
+  const a = await context.newPage(); const b = await context.newPage();
+  try {
+    await a.goto(`${baseURL}/deaf.html?room=RENEWAL`); await b.goto(`${baseURL}/hearing.html?room=RENEWAL`);
+    await expect(b.locator('#replyStatus')).toHaveText('Ready to send.');
+    await expect.poll(() => b.evaluate(() => window.peerConnections.at(-1)?.connectionState)).toBe('connected');
+    const before = await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id));
+    const ufrag = await b.evaluate(() => window.peerConnections.at(-1).localDescription.sdp.match(/a=ice-ufrag:(\S+)/)[1]);
+    await expect.poll(() => b.evaluate(() => window.renewedConfigurations), { timeout: 10000 }).toBeGreaterThan(0);
+    await expect.poll(() => b.evaluate(() => window.peerConnections.at(-1).localDescription.sdp.match(/a=ice-ufrag:(\S+)/)[1])).not.toBe(ufrag);
+    const counts = await Promise.all([a.evaluate(() => window.renewedConfigurations), b.evaluate(() => window.renewedConfigurations)]);
+    await Promise.all([a.evaluate(() => window.dispatchEvent(new Event('online'))), b.evaluate(() => window.dispatchEvent(new Event('online')))]);
+    for (const [index, page] of [a, b].entries()) {
+      await expect.poll(() => page.evaluate(() => window.renewedConfigurations)).toBeGreaterThan(counts[index]);
+      await expect.poll(() => page.evaluate(() => window.peerConnections.at(-1).signalingState)).toBe('stable');
+      await expect.poll(() => page.evaluate(() => window.peerConnections.at(-1).connectionState)).toBe('connected');
+    }
+    expect(await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(before);
+    expect(await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live'))).toBe(true);
+    await b.locator('#replyText').fill('Still connected after renewal'); await b.locator('#replySend').click();
+    await expect(a.locator('.conversation-text')).toContainText(['Still connected after renewal']);
+    expect(errors).toEqual([]);
+  } finally { await context.close(); }
+});

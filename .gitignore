@@ -4,6 +4,8 @@
 
 # ── OS / Editor ──────────────────────────────
 .DS_Store
+.Rhistory
+ASL-interpreter/.git-upstream-reference/
 .DS_Store?
 ._*
 .Spotlight-V100
@@ -139,3 +141,8 @@ celerybeat.pid
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Browser verification artifacts
+.impeccable/review/
+tandem-app/test-results/
+tandem-app/playwright-report/

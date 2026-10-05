@@ -1,0 +1,54 @@
+name: tandem-staging
+services:
+  app:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    init: true
+    env_file: ./runtime.env
+    environment:
+      NODE_ENV: production
+      PORT: '3000'
+      ALLOWED_ORIGIN: https://${APP_HOST:?Set APP_HOST}
+      TRUST_PROXY_HOPS: '1'
+      ENABLE_ASL: 'false'
+      ENABLE_AVATAR: 'false'
+      ENABLE_SPEECH: ${ENABLE_SPEECH:-false}
+      ENABLE_SPEECH_OUTPUT: 'false'
+      MAX_CAPTION_STREAMS: '2'
+    expose:
+      - '3000'
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+  proxy:
+    image: caddy:2.11.6-alpine
+    restart: unless-stopped
+    environment:
+      APP_HOST: ${APP_HOST:?Set APP_HOST}
+    ports:
+      - '80:80'
+      - '443:443'
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      app:
+        condition: service_healthy
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+volumes:
+  caddy_data:
+  caddy_config:

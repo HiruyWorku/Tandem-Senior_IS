@@ -1,6 +1,10 @@
 const Anthropic = require('@anthropic-ai/sdk');
 
-const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+let client;
+function getClient() {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error('Suggestions are disabled');
+  return client ||= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 10000, maxRetries: 0 });
+}
 
 // Cached system prompts — both share the same ephemeral cache block so
 // switching between the two calls within a session still benefits from caching.
@@ -44,9 +48,8 @@ async function interpretLetters(letters) {
   if (!letters || letters.length === 0) return '';
 
   const sequence = letters.join('-');
-  console.log(`[Claude/word] ${sequence}`);
 
-  const message = await client.messages.create({
+  const message = await getClient().messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 24,
     system: CACHED_WORD_SYSTEM,
@@ -54,7 +57,6 @@ async function interpretLetters(letters) {
   });
 
   const result = (message.content[0]?.text || '').trim().toUpperCase();
-  console.log(`[Claude/word] ${sequence} → "${result}"`);
   return result;
 }
 
@@ -68,9 +70,8 @@ async function interpretSentence(words) {
   if (words.length === 1) return words[0];
 
   const raw = words.join(' ');
-  console.log(`[Claude/sentence] "${raw}"`);
 
-  const message = await client.messages.create({
+  const message = await getClient().messages.create({
     model: 'claude-haiku-4-5-20251001',
     max_tokens: 80,
     system: CACHED_SENTENCE_SYSTEM,
@@ -78,7 +79,6 @@ async function interpretSentence(words) {
   });
 
   const result = (message.content[0]?.text || '').trim();
-  console.log(`[Claude/sentence] "${raw}" → "${result}"`);
   return result || raw;
 }
 

@@ -1,56 +1,43 @@
 const express = require('express');
-const router = express.Router();
-const { Readable } = require('stream');
-const { Readable: WebReadable } = require('stream/web');
+const { Readable } = require('node:stream');
 
-// GET /pose?text=Hello&spoken=en&signed=ase
-router.get('/pose', async (req, res) => {
-  const { text, spoken = 'en', signed = 'ase' } = req.query;
-  if (!text || !String(text).trim()) {
-    return res.status(400).send('Missing text');
-  }
-
-  try {
-    const base = 'https://us-central1-sign-mt.cloudfunctions.net/spoken_text_to_signed_pose';
-    const url = `${base}?text=${encodeURIComponent(text)}&spoken=${encodeURIComponent(spoken)}&signed=${encodeURIComponent(signed)}`;
-
-    const upstream = await fetch(url, {
-      method: 'GET',
-      headers: {
-        Referer: 'https://sign.mt/',
-        Origin: 'https://sign.mt',
-        'User-Agent': 'Mozilla/5.0',
-        Accept: '*/*',
-      },
-    });
-
-    res.status(upstream.status);
-    upstream.headers.forEach((value, key) => {
-      if (!['transfer-encoding', 'content-encoding'].includes(key)) {
-        res.setHeader(key, value);
-      }
-    });
-    res.setHeader('Cache-Control', 'no-store');
-
-    if (!upstream.body) return res.end();
-
-    if (!upstream.ok) {
-      const bodyTxt = await upstream.text().catch(() => '');
-      console.error('Upstream error', upstream.status, bodyTxt.slice(0, 500));
-      return res.end(bodyTxt);
+function createPoseProxy({ fetchPose = fetch, telemetry = { failure() {} } } = {}) {
+  const router = express.Router();
+  router.get('/pose', async (req, res) => {
+    const { text, spoken = 'en', signed = 'ase' } = req.query;
+    if (typeof text !== 'string' || !text.trim() || text.length > 1000 ||
+      typeof spoken !== 'string' || !/^[a-z]{2,3}$/.test(spoken) ||
+      typeof signed !== 'string' || !/^[a-z]{2,3}$/.test(signed)) {
+      return res.status(400).json({ error: 'Invalid signing request.' });
     }
-
     try {
-      const nodeReadable = Readable.fromWeb ? Readable.fromWeb(upstream.body) : WebReadable.toWeb(upstream.body);
-      return nodeReadable.pipe(res);
+      const url = new URL('https://us-central1-sign-mt.cloudfunctions.net/spoken_text_to_signed_pose');
+      url.search = new URLSearchParams({ text, spoken, signed }).toString();
+      const upstream = await fetchPose(url, { signal: AbortSignal.timeout(10000), headers: {
+        Referer: 'https://sign.mt/', Origin: 'https://sign.mt', Accept: '*/*',
+      } });
+      res.set('Cache-Control', 'no-store');
+      if (!upstream.ok || !upstream.body) {
+        await upstream.body?.cancel();
+        telemetry.failure('avatar_provider_failed', upstream.status);
+        return res.status(503).json({ error: 'Signing is unavailable. You can still type replies.' });
+      }
+      res.set('Content-Type', upstream.headers.get('content-type') || 'application/octet-stream');
+      const stream = Readable.fromWeb(upstream.body);
+      stream.on('error', () => {
+        telemetry.failure('avatar_provider_failed');
+        if (!res.headersSent) res.status(503).json({ error: 'Signing is unavailable. You can still type replies.' });
+        else res.destroy();
+      });
+      res.on('close', () => stream.destroy());
+      stream.pipe(res);
     } catch {
-      const buf = Buffer.from(await upstream.arrayBuffer());
-      return res.end(buf);
+      telemetry.failure('avatar_provider_failed');
+      if (!res.headersSent) res.status(503).json({ error: 'Signing is unavailable. You can still type replies.' });
+      else res.destroy();
     }
-  } catch (e) {
-    console.error('Proxy error:', e && e.stack ? e.stack : e);
-    res.status(500).send('Proxy error');
-  }
-});
-
-module.exports = router;
+  });
+  return router;
+}
+module.exports = createPoseProxy();
+module.exports.createPoseProxy = createPoseProxy;

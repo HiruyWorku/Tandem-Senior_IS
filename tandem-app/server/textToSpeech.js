@@ -3,7 +3,7 @@
 // sent to the hearing peer over Socket.IO.
 const textToSpeech = require('@google-cloud/text-to-speech');
 
-const client = new textToSpeech.TextToSpeechClient();
+let client;
 
 /**
  * Convert text to speech and return a base64-encoded MP3 string.
@@ -14,6 +14,7 @@ const client = new textToSpeech.TextToSpeechClient();
  * @returns {Promise<string>} base64-encoded MP3 audio content
  */
 async function synthesize(text) {
+    client ||= new textToSpeech.TextToSpeechClient();
     const request = {
         input: { text },
         voice: {
@@ -29,7 +30,7 @@ async function synthesize(text) {
         },
     };
 
-    const [response] = await client.synthesizeSpeech(request);
+    const [response] = await client.synthesizeSpeech(request, { timeout: 10000, retry: null });
     // response.audioContent is a Buffer; encode it for JSON transport over Socket.IO.
     return response.audioContent.toString('base64');
 }

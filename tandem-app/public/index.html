@@ -4,7 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tandem</title>
-  <meta name="description" content="Real-time ASL ↔ speech communication, powered by AI." />
+  <meta name="description" content="Private video calls, live captions, and typed replies." />
   <link rel="stylesheet" href="/style.css" />
   <style>
     /* Landing-only extras */
@@ -52,16 +52,16 @@
         </svg>
       </div>
       <h1 class="l-wordmark">Tandem</h1>
-      <p class="l-tagline">Real-time ASL and speech, understood by both sides of the conversation.</p>
+      <p class="l-tagline">Video, captions, and typed replies for your conversation.</p>
     </div>
 
     <!-- Session -->
     <div class="l-session">
       <div class="l-session-top">
-        <p class="l-session-label">Session code — share this with your partner</p>
+        <p class="l-session-label">Private session</p>
         <div class="l-session-code-row">
           <span class="l-session-code" id="roomCodeDisplay">····</span>
-          <button class="l-copy-btn" id="copyLinkBtn">
+          <button class="l-copy-btn" id="copyLinkBtn" disabled>
             <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <rect x="9" y="9" width="13" height="13" rx="2"/>
               <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/>
@@ -70,72 +70,44 @@
           </button>
         </div>
       </div>
-      <p class="l-session-hint">Both users open the same link, then choose a role below.</p>
+      <p class="l-session-hint" id="invitationStatus" role="status">Preparing your private invitation…</p>
+      <button class="l-copy-btn" id="newInvitationBtn" hidden>Start a new session</button>
+      <noscript>Enable JavaScript to create or join a private session.</noscript>
     </div>
 
     <!-- Roles -->
     <div class="l-roles">
-      <a id="deafLink" href="#" class="l-role l-role-deaf">
+      <a id="deafLink" aria-disabled="true" class="l-role l-role-deaf">
         <div class="l-role-icon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e8a84c" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="M18 11V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2"/><path d="M14 10V4a2 2 0 0 0-2-2 2 2 0 0 0-2 2v2"/><path d="M10 10.5V6a2 2 0 0 0-2-2 2 2 0 0 0-2 2v8"/><path d="M18 8a2 2 0 1 1 4 0v6a8 8 0 0 1-8 8h-2c-2.8 0-4.5-.86-5.99-2.34l-3.6-3.6a2 2 0 0 1 2.83-2.82L7 15"/>
           </svg>
         </div>
         <p class="l-role-name">Deaf / Hard of Hearing</p>
-        <p class="l-role-desc">Sign via your camera. AI interprets your ASL and speaks it to the hearing user in real time.</p>
+        <p class="l-role-desc">Use video and typed replies. Experimental fingerspelling assistance is available when configured.</p>
         <svg class="l-role-arrow" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 12h14M12 5l7 7-7 7"/>
         </svg>
       </a>
 
-      <a id="hearingLink" href="#" class="l-role l-role-hearing">
+      <a id="hearingLink" aria-disabled="true" class="l-role l-role-hearing">
         <div class="l-role-icon">
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#e07474" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
           </svg>
         </div>
         <p class="l-role-name">Hearing</p>
-        <p class="l-role-desc">Speak normally. Your words are captioned and rendered as a signing avatar for the deaf user.</p>
+        <p class="l-role-desc">Use video and typed replies, with live captions and optional spoken replies when configured.</p>
         <svg class="l-role-arrow" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M5 12h14M12 5l7 7-7 7"/>
         </svg>
       </a>
     </div>
 
-    <p class="l-foot">Chrome or Edge recommended &nbsp;·&nbsp; Requires camera and microphone</p>
+    <p class="l-foot">Chrome or Edge recommended &nbsp;·&nbsp; Camera and microphone optional</p>
   </div>
 </div>
 
-<script>
-(function () {
-  function genCode() {
-    return Array.from(crypto.getRandomValues(new Uint8Array(5)))
-      .map(b => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[b % 32])
-      .join('');
-  }
-
-  const params = new URLSearchParams(window.location.search);
-  let room = params.get('room');
-  if (!room || !/^[A-Z0-9]{4,12}$/.test(room)) {
-    room = genCode();
-    const url = new URL(window.location.href);
-    url.searchParams.set('room', room);
-    history.replaceState(null, '', url.toString());
-  }
-
-  document.getElementById('roomCodeDisplay').textContent = room;
-  document.getElementById('deafLink').href   = '/deaf.html?room=' + room;
-  document.getElementById('hearingLink').href = '/hearing.html?room=' + room;
-
-  const copyBtn = document.getElementById('copyLinkBtn');
-  copyBtn.addEventListener('click', function () {
-    navigator.clipboard.writeText(location.origin + '/?room=' + room).then(() => {
-      const orig = this.innerHTML;
-      this.innerHTML = '✓&nbsp; Copied';
-      setTimeout(() => { this.innerHTML = orig; }, 2000);
-    });
-  });
-})();
-</script>
+<script type="module" src="/landing.js"></script>
 </body>
 </html>

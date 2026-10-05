@@ -1,0 +1,18 @@
+[Unit]
+Description=Tandem staging containers
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/tandem/tandem-app/deploy/staging
+ExecStartPre=/usr/bin/python3 /opt/tandem/tandem-app/deploy/staging/refresh-runtime.py
+ExecStart=/usr/bin/docker compose up --detach --wait --wait-timeout 180
+ExecStop=/usr/bin/docker compose stop
+TimeoutStartSec=240
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

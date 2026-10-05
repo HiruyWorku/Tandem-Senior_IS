@@ -188,6 +188,7 @@ const MIN_SAME_LETTER_INTERVAL = 900; // ms — don't re-emit same letter too fa
   try {
     const roomCode = new URLSearchParams(window.location.search).get('room');
     if (!roomCode) { window.location.href = '/'; return; }
+    if (!await window.TandemApp.authorizeInvitation(roomCode)) return;
 
     window.TandemApp.setStatus('Requesting camera and microphone…');
     await window.TandemApp.initMedia();
@@ -206,7 +207,7 @@ const MIN_SAME_LETTER_INTERVAL = 900; // ms — don't re-emit same letter too fa
     const attachTtsToast = () => {
       if (window.socket) {
         window.socket.on('ttsSpoken', () =>
-          showPillToast('tandem-tts-toast', '🔊 Spoken', '#e8a84c'));
+          window.TandemApp.showPillToast('tandem-tts-toast', '🔊 Spoken', '#e8a84c'));
       }
     };
     attachTtsToast();
@@ -214,8 +215,14 @@ const MIN_SAME_LETTER_INTERVAL = 900; // ms — don't re-emit same letter too fa
       const t = setInterval(() => { if (window.socket) { clearInterval(t); attachTtsToast(); } }, 100);
     }
 
+    const stream = document.getElementById('localVideo')?.srcObject;
+    const signingVideo = document.getElementById('aslVideo');
+    if (stream && signingVideo) {
+      signingVideo.srcObject = stream;
+      signingVideo.play().catch(() => {});
+    }
     try {
-      await initASL();
+      if (window.TandemApp.capabilities?.recognition && stream) await initASL();
     } catch (err) {
       console.error('[ASL] initASL failed:', err);
       const s = document.getElementById('aslStatus');
@@ -341,7 +348,7 @@ async function handleResults(results, statusEl) {
   try {
     const res = await fetch('/api/predict', {
       method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', ...window.TandemApp.invitationHeaders() },
       body:    JSON.stringify({ landmarks: flat63 }),
     });
     if (res.ok) {
@@ -454,8 +461,6 @@ function flushWordBuffer() {
 
   const histEl = document.getElementById('aslHistoryLine');
   if (histEl) histEl.textContent = '';
-
-  console.log('[word] → Claude:', letters.join('-'));
 
   if (window.socket?.connected) {
     window.socket.emit('aslWord', { letters });

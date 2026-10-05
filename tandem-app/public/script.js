@@ -1,3 +1,7 @@
+import { IceLease } from '/iceLease.mjs';
+import { AudioCapture } from '/audioCapture.js';
+import { invitationToken, invitationHeaders } from '/invitation.js';
+
 // script.js - Shared WebRTC logic for Tandem
 
 const statusEl = document.getElementById('status-text');
@@ -6,14 +10,15 @@ const remoteVideo = document.getElementById('remoteVideo');
 const toggleMicBtn = document.getElementById('toggleMic');
 const toggleCameraBtn = document.getElementById('toggleCamera');
 
-let audioContext;
-let sourceNode;
-let processorNode;
-let audioStream;
-let isProcessingAudio = false;
-let audioProcessingInitialized = false;
+let capture;
+let joinedRoom = false;
+let captionPaused = false;
+let captureState = 'unavailable';
+let providerState = 'disabled';
+let providerRetryable = false;
+let captionRequest = 0;
+let captionBusy = false;
 
-let lastTranscriptUpdate = 0;
 const TRANSCRIPT_TIMEOUT = 3000;
 // Per-strip timers so local and remote resets don't cancel each other
 const _transcriptTimers = {};
@@ -21,27 +26,6 @@ const _transcriptTimers = {};
 function setupDataChannel(channel) {
   channel.onopen = () => {
     console.log('Data channel is open and ready');
-  };
-
-  channel.onmessage = (event) => {
-    try {
-      const data = JSON.parse(event.data);
-      if (data.type === 'transcript') {
-        updateTranscript(data.text, data.isFinal, false);
-        // Only send FINAL transcripts to the avatar so an in-progress signing
-        // animation is never preempted by an interim (partial) result.
-        if (data.isFinal && window && window.avatar && typeof window.avatar.enqueue === 'function') {
-          window.avatar.enqueue(data.text, 'en', 'ase');
-        }
-      }
-      if (data.type === 'aslPrediction') {
-        if (typeof window.handleASLPrediction === 'function') {
-          window.handleASLPrediction(data.prediction);
-        }
-      }
-    } catch (err) {
-      console.error('Error parsing data channel message:', err);
-    }
   };
 
   channel.onclose = () => {
@@ -66,23 +50,8 @@ function updateTranscript(transcript, isFinal = true, isLocal = true) {
   const strip = captionsEl.closest('.subtitle-strip');
   if (strip) strip.classList.add('has-text');
 
-  lastTranscriptUpdate = Date.now();
-
-  if (isLocal && dataChannel && dataChannel.readyState === 'open') {
-    try {
-      dataChannel.send(JSON.stringify({
-        type: 'transcript',
-        text: transcript,
-        isFinal: isFinal
-      }));
-    } catch (err) {
-      console.error('Error sending caption:', err);
-    }
-  }
-
   clearTimeout(_transcriptTimers[captionsEl.id]);
   _transcriptTimers[captionsEl.id] = setTimeout(() => {
-    if (Date.now() - lastTranscriptUpdate >= TRANSCRIPT_TIMEOUT) {
       // Reset to idle placeholder text
       if (captionsEl) {
         captionsEl.textContent = isLocal
@@ -90,7 +59,6 @@ function updateTranscript(transcript, isFinal = true, isLocal = true) {
           : 'Waiting for speech\u2026';
       }
       if (strip) strip.classList.remove('has-text');
-    }
   }, TRANSCRIPT_TIMEOUT);
 }
 
@@ -99,35 +67,98 @@ let isCameraOn = true;
 
 let ICE_SERVERS = [{ urls: 'stun:stun.l.google.com:19302' }];
 
+const iceLease = new IceLease({
+  fetchConfig: async signal => {
+    const response = await fetch('/ice-config', { cache: 'no-store', headers: invitationHeaders(),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(10000)]) });
+    if (!response.ok) { const error = new Error('ICE configuration unavailable'); error.status = response.status; throw error; }
+    const expires = response.headers.get('X-Turn-Expires-At');
+    return { servers: await response.json(), expiresAt: expires ? Number(expires) * 1000 : null };
+  },
+  onRenewed: servers => {
+    ICE_SERVERS = servers;
+    if (!pc || pc.signalingState === 'closed') return;
+    pc.setConfiguration({ ...pc.getConfiguration(), iceServers: servers });
+    if (joinedRoom && peerPresent && socket?.connected) {
+      pc.restartIce();
+      socket.emit('client:health', { event: 'ice_renewed' });
+    }
+  },
+  onFailure: ({ terminal, expired }) => {
+    socket?.emit('client:health', { event: 'ice_failed' });
+    if (terminal && expired) setStatus('Relay access expired. Typed replies may still work.', 'error');
+  },
+});
+
 async function loadIceServers() {
-  try {
-    const res = await fetch('/ice-config', { cache: 'no-store' });
-    if (!res.ok) {
-      console.warn('[client] /ice-config HTTP error', res.status);
-      return;
-    }
-    const servers = await res.json();
-    if (Array.isArray(servers) && servers.length) {
-      ICE_SERVERS = servers;
-      console.log('[client] loaded ICE servers', ICE_SERVERS);
-    }
-  } catch (err) {
-    console.warn('[client] failed to load /ice-config; using default STUN', err);
-  }
+  try { const servers = await iceLease.load(); if (servers) ICE_SERVERS = servers; }
+  catch { console.warn('[client] Relay configuration unavailable; using current ICE servers.'); }
 }
 
 let pc;
 let socket;
 let localStream;
 let makingOffer = false;
+let polite = false;
+let peerPresent = false;
+let isSettingRemoteAnswerPending = false;
+let recoveryTimer;
 let dataChannel;
 let ignoreOffer = false;
+let pendingIceCandidates = [];
+let peerReset = Promise.resolve();
+let hasConnected = false;
+let connectionGeneration = 0;
 
-function setStatus(text) {
+async function flushIceCandidates() {
+  for (const candidate of pendingIceCandidates.splice(0)) await pc.addIceCandidate(candidate);
+}
+
+function setStatus(text, state) {
   if (statusEl) statusEl.textContent = text;
+  const dot = document.getElementById('status-dot');
+  const resolved = state || (/invalid|unavailable|error|full/i.test(text) ? 'error' : 'waiting');
+  if (dot) dot.className = `status-dot ${resolved}`;
+}
+
+async function authorizeInvitation(room) {
+  try {
+    const response = await fetch('/capabilities', { signal: AbortSignal.timeout(10000) });
+    if (!response.ok) throw new Error('Connection unavailable. Reload to try again.');
+    const capabilities = await response.json();
+    window.TandemApp.capabilities = capabilities;
+    if (!capabilities.privateRooms && !invitationToken) return true;
+    const result = await fetch('/api/rooms/validate', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', ...invitationHeaders() },
+      body: JSON.stringify({ room }), signal: AbortSignal.timeout(10000),
+    });
+    if (!result.ok) throw new Error('Invitation invalid or expired. Ask your partner for the full invitation link.');
+    return true;
+  } catch (error) {
+    const message = error.message || 'Invitation unavailable. Reload to try again.';
+    setStatus(message, 'error');
+    const reply = document.getElementById('replyStatus');
+    if (reply) reply.textContent = message;
+    const waiting = document.getElementById('stageWaiting');
+    if (waiting) {
+      const label = waiting.querySelector('p');
+      if (label) label.textContent = message;
+      const spinner = waiting.querySelector('.spinner');
+      if (spinner) spinner.hidden = true;
+    }
+    if (toggleMicBtn) toggleMicBtn.disabled = true;
+    if (toggleCameraBtn) toggleCameraBtn.disabled = true;
+    return false;
+  }
 }
 
 async function initMedia() {
+  try {
+    const response = await fetch('/capabilities');
+    window.TandemApp.capabilities = await response.json();
+  } catch {
+    window.TandemApp.capabilities = {};
+  }
   try {
     console.log('[client] requesting getUserMedia');
     localStream = await navigator.mediaDevices.getUserMedia({
@@ -148,124 +179,128 @@ async function initMedia() {
       localVideo.srcObject = localStream;
     }
 
-    await setupAudioProcessing(localStream);
+    if (window.TandemApp.capabilities.captions) await setupAudioProcessing(localStream);
     setupMediaControls();
   } catch (error) {
     console.error('Error initializing media:', error);
-    setStatus('Error accessing media devices: ' + error.message);
+    setStatus('Camera or microphone unavailable. You can still type replies.');
+    const waiting = document.getElementById('stageWaiting');
+    if (waiting) {
+      const label = waiting.querySelector('p');
+      if (label) label.textContent = 'Camera or microphone unavailable. You can still type replies.';
+      const spinner = waiting.querySelector('.spinner');
+      if (spinner) spinner.hidden = true;
+    }
+    if (toggleMicBtn) toggleMicBtn.disabled = true;
+    if (toggleCameraBtn) toggleCameraBtn.disabled = true;
+    setupSpeakerControl();
+    return false;
   }
 }
 
+function updateCaptionState() {
+  const status = document.getElementById('captionStatus');
+  const action = document.getElementById('captionAction');
+  const captionsConfigured = window.TandemApp.capabilities?.captions;
+  const labels = {
+    ready: 'Captions ready', starting: 'Starting captions…', active: 'Your captions on',
+    paused: 'Your captions paused', reconnecting: 'Captions reconnecting…',
+    unavailable: 'Captions unavailable · type a reply', limited: 'Captions limited · some audio was skipped',
+  };
+  let text = labels[providerState] || 'Captions unavailable · type a reply';
+  let label = 'Pause captions';
+  let visible = Boolean(captionsConfigured && localStream?.getAudioTracks().length && joinedRoom);
+  if (!captionsConfigured) { text = 'Captions unavailable · type a reply'; visible = false; }
+  else if (captureState === 'unsupported') {
+    text = 'Captions unsupported in this browser · type a reply'; visible = false;
+  } else if (captureState === 'failed' || captureState === 'unavailable') {
+    text = 'Caption capture unavailable · type a reply'; label = 'Retry captions';
+  } else if (!isMicOn) { text = 'Microphone off · captions paused'; visible = false; }
+  else if (captionPaused) { text = 'Your captions paused'; label = 'Start captions'; }
+  else if (captureState !== 'running') { text = 'Start captions to use your microphone'; label = 'Start captions'; }
+  else if (providerState === 'unavailable') { label = 'Retry captions'; visible = providerRetryable; }
+  else if (providerState === 'paused') { label = 'Start captions'; }
+  if (status) status.textContent = text;
+  if (action) { action.hidden = !visible; action.textContent = label; action.disabled = captionBusy; }
+}
+
+function syncCapture() {
+  capture?.setEnabled(joinedRoom && isMicOn && !captionPaused && captureState === 'running' &&
+    !['unavailable', 'reconnecting', 'disabled', 'paused'].includes(providerState));
+  updateCaptionState();
+}
+
 async function setupAudioProcessing(stream) {
-  try {
-    if (audioProcessingInitialized && audioStream && audioStream.id === stream.id) {
-      console.log('Audio processing already initialized for this stream');
-      return true;
-    }
-
-    console.log('Setting up audio processing...');
-    await cleanupAudioProcessing();
-    audioStream = stream;
-
-    const AudioContext = window.AudioContext || window.webkitAudioContext;
-    audioContext = new AudioContext();
-    sourceNode = audioContext.createMediaStreamSource(stream);
-    processorNode = audioContext.createScriptProcessor(4096, 1, 1);
-
-    processorNode.onaudioprocess = (event) => {
-      if (!isProcessingAudio || !socket || !socket.connected) return;
-
-      try {
-        const inputData = event.inputBuffer.getChannelData(0);
-        if (!inputData || inputData.length === 0) return;
-
-        const output = new Int16Array(inputData.length);
-        for (let i = 0; i < inputData.length; i++) {
-          const s = Math.max(-1, Math.min(1, inputData[i]));
-          output[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-        }
-
-        if (socket && socket.connected) {
-          socket.emit('audioData', {
-            buffer: Array.from(output),
-            sampleRate: audioContext.sampleRate,
-            isFinal: false
-          });
-        }
-      } catch (error) {
-        console.error('Error processing audio:', error);
+  capture ||= new AudioCapture({
+    onAudio: packet => {
+      if (joinedRoom && isMicOn && !captionPaused && socket?.connected) {
+        // Audio is live: discard congestion instead of replaying stale speech later.
+        socket.volatile.emit('audioData', packet);
       }
-    };
-
-    sourceNode.connect(processorNode);
-    processorNode.connect(audioContext.destination);
-
-    audioProcessingInitialized = true;
-    isProcessingAudio = true;
-    console.log('Audio processing started');
-
+    },
+    onState: state => {
+      captureState = state;
+      syncCapture();
+      if (joinedRoom && ['suspended', 'interrupted', 'failed'].includes(state)) setCaptionEnabled(false);
+    },
+  });
+  try {
+    await capture.start(stream);
+    captureState = capture.context?.state || 'unavailable';
+    syncCapture();
     return true;
   } catch (error) {
-    console.error('Error setting up audio processing:', error);
+    captureState = error.code === 'unsupported' ? 'unsupported' : 'failed';
+    updateCaptionState();
     return false;
   }
 }
 
 async function cleanupAudioProcessing() {
-  isProcessingAudio = false;
-  audioProcessingInitialized = false;
-
-  if (processorNode) {
-    try {
-      if (sourceNode) sourceNode.disconnect();
-      processorNode.disconnect();
-      processorNode.onaudioprocess = null;
-    } catch (err) {
-      console.error('Error disconnecting audio nodes:', err);
-    }
-    processorNode = null;
-  }
-
-  if (audioContext && audioContext.state !== 'closed') {
-    try {
-      await audioContext.close();
-    } catch (err) {
-      console.error('Error closing audio context:', err);
-    }
-    audioContext = null;
-  }
-
-  if (audioStream) {
-    audioStream.getTracks().forEach(track => {
-      try {
-        track.stop();
-      } catch (err) {
-        console.error('Error stopping audio track:', err);
-      }
-    });
-    audioStream = null;
-  }
-
-  sourceNode = null;
+  await capture?.close();
+  captureState = 'unavailable';
 }
 
+async function setCaptionEnabled(enabled) {
+  if (!joinedRoom || !window.TandemApp.capabilities?.captions) return;
+  const request = ++captionRequest;
+  captionBusy = true;
+  capture?.setEnabled(false);
+  updateCaptionState();
+  if (enabled) {
+    if (!capture?.node) await setupAudioProcessing(localStream);
+    if (!capture?.node) { captionBusy = false; updateCaptionState(); return; }
+    try { await capture?.resume(); } catch { captureState = 'failed'; captionBusy = false; updateCaptionState(); return; }
+  }
+  if (request !== captionRequest || !joinedRoom) return;
+  socket.timeout(5000).emit('caption:state', { enabled }, (error, result) => {
+    if (request !== captionRequest || !joinedRoom) return;
+    captionBusy = false;
+    if (error || !result?.ok) {
+      providerState = 'unavailable'; providerRetryable = true;
+    } else {
+      providerState = enabled ? 'ready' : 'paused';
+    }
+    syncCapture();
+  });
+}
+
+document.getElementById('captionAction')?.addEventListener('click', () => {
+  const enabled = captionPaused || captureState !== 'running' || ['unavailable', 'paused'].includes(providerState);
+  captionPaused = !enabled;
+  setCaptionEnabled(enabled);
+});
+
 async function createPeerConnection() {
+  const generation = ++connectionGeneration;
+  pendingIceCandidates = [];
+  ignoreOffer = false;
   console.log('[client] creating RTCPeerConnection');
 
-  try {
-    const res = await fetch('/ice-config', { cache: 'no-store' });
-    if (res.ok) {
-      const servers = await res.json();
-      if (servers && servers.length > 0) {
-        ICE_SERVERS = servers;
-      }
-    }
-  } catch (err) {
-    console.warn('[client] Error fetching ICE config, using defaults', err);
-  }
+  clearTimeout(recoveryTimer);
+  await loadIceServers();
 
-  console.log('[client] Using ICE servers:', ICE_SERVERS);
-
+  if (generation !== connectionGeneration) return;
   const config = {
     iceServers: ICE_SERVERS,
     iceTransportPolicy: 'all',
@@ -274,30 +309,24 @@ async function createPeerConnection() {
     rtcpMuxPolicy: 'require'
   };
 
-  pc = new RTCPeerConnection(config);
+  const connection = new RTCPeerConnection(config);
+  pc = connection;
 
   try {
-    dataChannel = pc.createDataChannel('captions');
+    dataChannel = pc.createDataChannel('control');
     setupDataChannel(dataChannel);
-    console.log('Created data channel for captions');
+    console.log('Created control data channel');
   } catch (err) {
     console.error('Error creating data channel:', err);
   }
 
   pc.ondatachannel = (event) => {
-    if (event.channel.label === 'captions') {
+    if (pc !== connection) return;
+    if (event.channel.label === 'control') {
       dataChannel = event.channel;
       setupDataChannel(dataChannel);
-      console.log('Received remote data channel for captions');
+      console.log('Received control data channel');
     }
-  };
-
-  pc.onconnectionstatechange = () => {
-    console.log(`[client] connection state changed: ${pc.connectionState}`);
-    setStatus(`Connection: ${pc.connectionState}`);
-    // NOTE: Do NOT call initMedia() on disconnect — that creates a new camera
-    // stream not attached to pc, which orphans the old tracks and blacks out
-    // remote video. Re-negotiation is handled by the server join handler.
   };
 
   console.log('[client] RTCPeerConnection created', pc);
@@ -307,6 +336,7 @@ async function createPeerConnection() {
   }
 
   pc.addEventListener('track', (event) => {
+    if (pc !== connection) return;
     console.log('[client] remote track event', {
       streams: event.streams.length,
       trackKind: event.track && event.track.kind
@@ -323,22 +353,36 @@ async function createPeerConnection() {
   });
 
   pc.addEventListener('icecandidate', (event) => {
+    if (pc !== connection || !socket?.connected || !joinedRoom) return;
     console.log('[client] local icecandidate', { hasCandidate: !!event.candidate });
     if (event.candidate) {
       socket.emit('signal:ice-candidate', { candidate: event.candidate });
     }
   });
 
+  pc.addEventListener('negotiationneeded', async () => {
+    if (pc !== connection || !joinedRoom || !peerPresent || !socket?.connected) return;
+    try { await makeOffer(); } catch { socket.emit('client:health', { event: 'ice_failed' }); }
+  });
   pc.addEventListener('connectionstatechange', () => {
-    setStatus(`Peer connection: ${pc.connectionState}`);
+    if (pc !== connection) return;
+    const labels = { new: 'Waiting for your peer…', connecting: 'Connecting to your peer…', connected: 'Connected to your peer',
+      disconnected: 'Connection interrupted. Reconnecting…', failed: 'Video connection failed. Typed replies may still work.', closed: 'Video connection closed.' };
+    setStatus(labels[pc.connectionState] || 'Waiting for your peer…', pc.connectionState === 'connected' ? 'connected' : pc.connectionState === 'failed' ? 'error' : 'waiting');
+    clearTimeout(recoveryTimer);
+    if (['disconnected', 'failed'].includes(connection.connectionState) && joinedRoom && peerPresent) {
+      recoveryTimer = setTimeout(async () => {
+        if (pc !== connection || !joinedRoom || !peerPresent || !socket?.connected) return;
+        try { await iceLease.refresh(); }
+        catch { if (pc === connection && connection.signalingState !== 'closed') connection.restartIce(); }
+      }, connection.connectionState === 'failed' ? 1000 : 5000);
+    }
     console.log('[client] connectionstatechange', pc.connectionState);
   });
 }
 
 // Fetch the server's per-boot instance ID and store it in sessionStorage.
-// If the ID changes on reconnect (server was restarted), reload the page so
-// a fresh RTCPeerConnection is guaranteed without the user having to manually
-// hit Cmd+Shift+R on both devices.
+// Server restarts recreate the peer connection while preserving the reply draft.
 async function checkServerInstance() {
   try {
     const res = await fetch('/instance-id', { cache: 'no-store' });
@@ -346,10 +390,9 @@ async function checkServerInstance() {
     const { id } = await res.json();
     const stored = sessionStorage.getItem('tandem_server_id');
     if (stored && stored !== id) {
-      console.log('[client] Server restarted (instance ID changed) — reloading page for fresh RTCPeerConnection');
+      console.log('[client] Server restarted — resetting peer connection');
       sessionStorage.setItem('tandem_server_id', id);
-      window.location.reload();
-      return;
+      return true;
     }
     sessionStorage.setItem('tandem_server_id', id);
   } catch (e) {
@@ -360,22 +403,43 @@ async function checkServerInstance() {
 function initSocket(userType, roomCode) {
   socket = io();
   window.socket = socket;
+  window.dispatchEvent(new CustomEvent('tandem:socket', { detail: socket }));
+  socket.on('captionStatus', data => {
+    providerState = data.status;
+    providerRetryable = data.retryable !== false;
+    syncCapture();
+  });
+  socket.on('peerCaptionStatus', data => {
+    const element = document.getElementById('peerCaptionStatus');
+    const labels = { ready: 'Peer captions ready', starting: 'Peer captions starting…', active: 'Peer captions on',
+      paused: 'Peer captions paused', disabled: 'Peer captions unavailable', reconnecting: 'Peer captions reconnecting…',
+      unavailable: 'Peer captions unavailable · you can exchange typed replies', limited: 'Peer captions limited · some audio was skipped' };
+    if (element) element.textContent = labels[data.status] || 'Peer captions unavailable';
+  });
+  socket.on('disconnect', () => { clearTimeout(recoveryTimer); peerPresent = false; joinedRoom = false; captionRequest++; captionBusy = false; syncCapture(); setStatus('Connection interrupted. Reconnecting…'); });
+  socket.on('connect_error', () => setStatus('Connection unavailable. Retrying… Your draft is saved here.'));
+  socket.on('protocolError', ({ code }) => {
+    if (code === 'invalid_invitation') {
+      setStatus('Invitation invalid or expired. Ask your partner for a new link.', 'error');
+      joinedRoom = false; syncCapture();
+      const reply = document.getElementById('replyStatus');
+      if (reply) reply.textContent = 'Invitation invalid or expired. Ask your partner for a new link.';
+    }
+    if (code === 'invalid_role' || code === 'leave_room_first') setStatus('Unable to join this room. Return home and try again.');
+  });
   socket.on('connect', async () => {
     console.log('[client] socket connected', socket.id);
 
-    await checkServerInstance();
+    const restarted = await checkServerInstance();
 
-    if (pc && (pc.signalingState === 'closed' || pc.connectionState === 'closed' || pc.connectionState === 'failed')) {
+    if (restarted || hasConnected || (pc && (pc.signalingState === 'closed' || pc.connectionState === 'closed' || pc.connectionState === 'failed'))) {
       console.log('[client] Stale RTCPeerConnection detected on reconnect — recreating');
       try { pc.close(); } catch (_) {}
       await createPeerConnection();
     }
 
-    if (audioStream && !isProcessingAudio) {
-      isProcessingAudio = true;
-    }
-
-    socket.emit('join', { userType, room: roomCode });
+    hasConnected = true;
+    socket.emit('join', { userType, room: roomCode, token: invitationToken });
   });
 
   socket.on('invalid_room', () => {
@@ -384,7 +448,6 @@ function initSocket(userType, roomCode) {
   });
 
   socket.on('transcript', (data) => {
-    console.log('[client] received transcript:', data);
     if (data.transcript) {
       updateTranscript(data.transcript, data.isFinal, data.isLocal);
       // Avatar only gets queued on final results — never on interim partials.
@@ -400,63 +463,18 @@ function initSocket(userType, roomCode) {
     }
   });
 
-  socket.on('aslPrediction', (data) => {
-    console.log('[client] received ASL prediction:', data);
-    if (typeof window.handleASLPrediction === 'function') {
-      window.handleASLPrediction(data.prediction);
-    }
-  });
-
-  socket.on('aslWordPending', (data) => {
-    console.log('[client] aslWordPending:', data.letters);
-    if (typeof window.handleASLWordPending === 'function') {
-      window.handleASLWordPending(data.letters);
-    }
-  });
-
-  socket.on('aslWordResult', (data) => {
-    console.log('[client] aslWordResult:', data.word);
-    if (typeof window.handleASLWordResult === 'function') {
-      window.handleASLWordResult(data.word, data.letters);
-    }
-  });
-
-  socket.on('aslWordConfirm', (data) => {
-    const el = document.getElementById('aslPrediction');
-    if (el) el.textContent = data.word;
-    console.log('[client] word confirmed:', data.word);
-  });
-
-  // Final cleaned sentence arrives — show it and queue the avatar.
-  socket.on('aslSentence', (data) => {
-    console.log('[client] aslSentence:', data.sentence);
-    if (typeof window.handleASLSentence === 'function') {
-      window.handleASLSentence(data.sentence);
-    }
-  });
-
-  // Sentence confirmed back to the deaf user.
-  socket.on('aslSentenceConfirm', (data) => {
-    const el = document.getElementById('aslPrediction');
-    if (el) el.textContent = data.sentence;
-    console.log('[client] sentence confirmed:', data.sentence);
-  });
-
-  // Receive synthesized TTS audio from the server and play it.
-  socket.on('ttsAudio', (data) => {
-    if (data && data.audioBase64) {
-      playTTSAudio(data.audioBase64).catch(err =>
-        console.error('[TTS] playback error:', err)
-      );
-    }
-  });
-
   // The deaf peer's avatar finished signing — show confirmation to the hearing user.
   socket.on('signingDone', () => {
     showSigningDoneToast();
   });
 
   socket.on('joined', ({ room, peers }) => {
+    joinedRoom = true;
+    peerPresent = peers === 2;
+    if (!localStream) socket.emit('client:health', { event: 'media_failed' });
+    providerState = window.TandemApp.capabilities?.captions ? 'ready' : 'disabled';
+    if (!isMicOn || captionPaused || captureState !== 'running') setCaptionEnabled(false);
+    syncCapture();
     setStatus(`Joined room: ${room}. Peers: ${peers}`);
     console.log('[client] joined', { room, peers });
   });
@@ -466,7 +484,9 @@ function initSocket(userType, roomCode) {
     console.warn('[client] room_full');
   });
 
-  socket.on('ready', () => {
+  socket.on('ready', (data) => {
+    polite = Boolean(data?.polite);
+    peerPresent = true;
     setStatus('Both peers present. Ready to negotiate.');
     console.log('[client] ready');
   });
@@ -474,6 +494,7 @@ function initSocket(userType, roomCode) {
   socket.on('initiate', async () => {
     console.log('[client] initiate received; making offer');
     try {
+      await peerReset;
       await makeOffer();
     } catch (err) {
       console.error('Error creating offer', err);
@@ -485,12 +506,15 @@ function initSocket(userType, roomCode) {
     const offer = payload?.sdp;
     if (!offer) return;
     try {
-      const offerCollision = makingOffer || pc.signalingState !== 'stable';
-      ignoreOffer = !offerCollision ? false : true;
+      await peerReset;
+      const readyForOffer = !makingOffer && (pc.signalingState === 'stable' || isSettingRemoteAnswerPending);
+      const offerCollision = !readyForOffer;
+      ignoreOffer = !polite && offerCollision;
       console.log('[client] handling offer', { offerCollision, ignoreOffer, signalingState: pc.signalingState });
       if (ignoreOffer) return;
 
       await pc.setRemoteDescription(offer);
+      await flushIceCandidates();
       const answer = await pc.createAnswer();
       await pc.setLocalDescription(answer);
       socket.emit('signal:answer', { sdp: pc.localDescription });
@@ -505,53 +529,56 @@ function initSocket(userType, roomCode) {
     const answer = payload?.sdp;
     if (!answer) return;
     try {
+      isSettingRemoteAnswerPending = true;
       await pc.setRemoteDescription(answer);
+      isSettingRemoteAnswerPending = false;
+      await flushIceCandidates();
       console.log('[client] applied remote answer');
     } catch (err) {
       console.error('Error applying remote answer:', err);
-    }
+    } finally { isSettingRemoteAnswerPending = false; }
   });
 
   socket.on('signal:ice-candidate', async ({ candidate }) => {
     console.log('[client] received remote ice-candidate', { hasCandidate: !!candidate });
     try {
-      if (pc && candidate) await pc.addIceCandidate(candidate);
+      if (pc && candidate) {
+        if (!pc.remoteDescription) pendingIceCandidates.push(candidate);
+        else await pc.addIceCandidate(candidate);
+      }
       if (candidate) console.log('[client] added remote ice-candidate');
     } catch (err) {
-      console.error('Error adding remote ICE candidate:', err);
+      if (!ignoreOffer) console.error('Error adding remote ICE candidate:', err);
     }
   });
 
   socket.on('peer_disconnected', () => {
-    setStatus('Peer disconnected.');
+    peerPresent = false;
+    clearTimeout(recoveryTimer);
+    setStatus('Your peer left. Waiting for someone to join…');
+    pc?.close();
+    if (remoteVideo) remoteVideo.srcObject = null;
+    peerReset = createPeerConnection();
     console.warn('[client] peer_disconnected');
   });
 }
 
 async function makeOffer() {
+  if (makingOffer || !socket?.connected || !joinedRoom || !peerPresent) return;
+  makingOffer = true;
   try {
-    // Recreate pc only for truly terminal states.
-    // 'disconnected' is temporary — ICE will retry automatically and the
-    // existing pc can still create a new offer (implicit ICE restart).
-    // 'failed' and 'closed' are terminal and need a fresh pc.
-    const terminalState = !pc
-      || pc.signalingState === 'closed'
-      || pc.connectionState === 'failed'
-      || pc.connectionState === 'closed';
-    if (terminalState) {
-      console.log(`[client] makeOffer: terminal pc state="${pc?.connectionState}" — recreating`);
-      try { pc?.close(); } catch (_) {}
+    // Failed ICE can restart on the existing connection; only closed peers need replacement.
+    if (!pc || pc.signalingState === 'closed' || pc.connectionState === 'closed') {
+      pc?.close();
       await createPeerConnection();
     }
-    makingOffer = true;
-    console.log('[client] creating offer');
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    socket.emit('signal:offer', { sdp: pc.localDescription });
-    console.log('[client] sent offer');
-  } finally {
-    makingOffer = false;
-  }
+    const connection = pc;
+    if (connection.signalingState !== 'stable') return;
+    const offer = await connection.createOffer();
+    if (pc !== connection || connection.signalingState !== 'stable' || !joinedRoom || !peerPresent) return;
+    await connection.setLocalDescription(offer);
+    if (pc === connection && joinedRoom && peerPresent && socket.connected) socket.emit('signal:offer', { sdp: connection.localDescription });
+  } finally { makingOffer = false; }
 }
 
 function toggleMic() {
@@ -561,6 +588,8 @@ function toggleMic() {
   if (audioTracks.length > 0) {
     isMicOn = !isMicOn;
     audioTracks[0].enabled = isMicOn;
+    if (window.TandemApp.capabilities?.captions) setCaptionEnabled(isMicOn && !captionPaused);
+    syncCapture();
 
     toggleMicBtn.classList.toggle('active-off', !isMicOn);
 
@@ -587,11 +616,20 @@ function setupMediaControls() {
   if (!toggleMicBtn || !toggleCameraBtn) return;
   toggleMicBtn.addEventListener('click', toggleMic);
   toggleCameraBtn.addEventListener('click', toggleCamera);
+  setupSpeakerControl();
 }
 
-// --- Text-to-Speech playback ---
-// Simple sequential queue: waits for the current audio to finish before playing the next.
-let _ttsChain = Promise.resolve();
+function setupSpeakerControl() {
+  const button = document.getElementById('toggleSpeaker');
+  if (!button || !remoteVideo) return;
+  button.addEventListener('click', async () => {
+    remoteVideo.muted = !remoteVideo.muted;
+    button.textContent = remoteVideo.muted ? 'Peer audio off' : 'Peer audio on';
+    button.setAttribute('aria-pressed', String(!remoteVideo.muted));
+    button.setAttribute('aria-label', remoteVideo.muted ? 'Turn on peer audio' : 'Turn off peer audio');
+    try { await remoteVideo.play(); } catch { setStatus('Peer audio could not start. Try turning it on again.'); }
+  });
+}
 
 /**
  * showPillToast — reusable pill toast injected into the DOM.
@@ -657,53 +695,25 @@ function showSigningDoneToast() {
 }
 
 
-/**
- * Decode a base64 MP3 string (sent from the server) and play it through the
- * device speakers using the Web Audio API.
- * @param {string} audioBase64 - Base64-encoded MP3 bytes
- */
-async function playTTSAudio(audioBase64) {
-  _ttsChain = _ttsChain.then(async () => {
-    try {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const ctx = new AudioCtx();
-
-      // Decode base64 → ArrayBuffer
-      const binary = atob(audioBase64);
-      const bytes = new Uint8Array(binary.length);
-      for (let i = 0; i < binary.length; i++) {
-        bytes[i] = binary.charCodeAt(i);
-      }
-
-      // Decode MP3 → AudioBuffer → play
-      const buffer = await ctx.decodeAudioData(bytes.buffer);
-      const source = ctx.createBufferSource();
-      source.buffer = buffer;
-      source.connect(ctx.destination);
-
-      await new Promise((resolve) => {
-        source.onended = resolve;
-        source.start(0);
-      });
-
-      // Notify the DEAF user (peer) that their sign has been fully spoken.
-      if (socket && socket.connected) {
-        socket.emit('ttsSpoken');
-      }
-
-      ctx.close();
-    } catch (err) {
-      console.error('[TTS] Audio playback failed:', err);
-    }
-  });
-  return _ttsChain;
-}
-
 window.TandemApp = {
+  authorizeInvitation,
+  invitationHeaders,
   initMedia,
   loadIceServers,
   createPeerConnection,
   initSocket,
   setStatus,
+  showPillToast,
   socket
 };
+
+window.addEventListener('online', () => { if (joinedRoom) iceLease.refresh().catch(() => {}); });
+
+window.addEventListener('pagehide', () => {
+  iceLease.stop();
+  clearTimeout(recoveryTimer);
+  socket?.disconnect();
+  pc?.close();
+  localStream?.getTracks().forEach(track => track.stop());
+  cleanupAudioProcessing();
+});

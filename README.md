@@ -1,53 +1,28 @@
-# Tandem — Bridging Deaf and Hearing Communities
+# Tandem
 
-Tandem is a real-time video conferencing application that enables natural communication between deaf and hearing individuals. A deaf user signs via webcam; the ML model recognises the ASL letter/gesture, converts it to text, and the hearing user hears it spoken aloud — and vice versa, speech is captioned and rendered as a signing avatar.
+Tandem is a one-to-one video calling project for communication between Deaf ASL users and hearing users. Originally a senior capstone, it is now being rebuilt toward a usable, production-ready application.
 
----
+The core app supports video and explicit typed replies without AI credentials or model files. Google Cloud captions and speech output can be enabled separately. Fingerspelling recognition and signing avatars remain experimental; fluent ASL translation has not been established.
 
-## Sub-projects
+## Start locally
 
-| Folder | Status | Purpose |
-|---|---|---|
-| [`tandem-app/`](tandem-app/) | ✅ **Active** | The full application — run this |
-| [`ASL-interpreter/`](ASL-interpreter/) | 📚 Reference | Standalone training pipeline (data collection, model training, inference scripts) |
+Use Node 24, then:
 
-> `chat-vid/` was a previous prototype and has been removed.
-
----
-
-## Quick Start
-
-See **[`tandem-app/README.md`](tandem-app/README.md)** for full setup instructions.
-
-```bash
+```sh
 cd tandem-app
-cp .env.example .env          # add your Google Cloud credentials
-npm install
-pip install -r requirements.txt
-npm run start:all              # starts Node.js + Python ASL API together
+npm ci
+npm start
 ```
 
-Open **http://localhost:3000** — choose Deaf or Hearing to join a session.
+Open http://localhost:3000 and share the full private invitation link with a second browser or device. See [application setup](tandem-app/README.md) for optional providers, TURN configuration, and tests.
 
----
- 
-## Research Resources
+## Project map
 
-### Signing Avatar
-- https://sign.mt/ — production signing translation service
-- https://github.com/sign/translate
-- https://github.com/aws-samples/genai-asl-avatar-generator
+- [tandem-app/](tandem-app/): active application, server, browser UI, and optional ASL tools.
+- [ASL-interpreter/](ASL-interpreter/): legacy training/reference project.
+- [Production plan](docs/PRODUCTION_PLAN.md): audit findings, decisions, and release acceptance gates.
+- [Product context](PRODUCT.md): audience, product limitations, and current UI scope.
 
-### ASL Recognition
-- https://github.com/SomyanshAvasthi/Sign-Language-Detection-using-MediaPipe
-- https://github.com/dxli94/WLASL
-- https://github.com/laplaces42/sign-language-interpreter
+The application is not yet production ready. Google Cloud staging has passed HTTPS, private admission, typed replies, forced TURN delivery, restart and a real Google caption smoke test. The owner confirmed phone/laptop connectivity across Wi-Fi and cellular. Real-user caption accuracy, long-call behavior, supported browsers and Deaf-user evaluation remain outstanding. See the [resume checkpoint](docs/RESUME.md) for the overnight pause and restart instructions.
 
-### WebRTC Video Calling
-- https://getstream.io/video/sdk/react/tutorial/video-calling/
-
----
-
-## License
-
-MIT — see [LICENSE](LICENSE)
+MIT licensed. See [LICENSE](LICENSE).

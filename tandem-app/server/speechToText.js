@@ -1,264 +1,251 @@
-// speech-to-text.js
 const speech = require('@google-cloud/speech');
-const { Writable } = require('stream');
 
+const VALID_SAMPLE_RATES = new Set([8000, 16000, 22050, 24000, 32000, 44100, 48000]);
+
+/** Own one lazily started recognizer per connected participant. */
 class SpeechToTextService {
-  constructor() {
-    this.client = new speech.SpeechClient();
+  constructor({ client, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now,
+    languageCode = 'en-US', maxStreams = 20, telemetry = { record() {}, failure() {} } } = {}) {
+    this.telemetry = telemetry;
+    this.client = client;
+    this.setTimer = setTimer;
+    this.clearTimer = clearTimer;
+    this.now = now;
+    this.languageCode = languageCode;
+    this.maxStreams = maxStreams;
     this.recognizeStreams = new Map();
-    this.STREAM_TIMEOUT = 4.5 * 60 * 1000; // 4.5 minutes (before the 5-minute limit)
+    this.STREAM_TIMEOUT = 4.5 * 60 * 1000;
+    this.MAX_FAILURE_MS = 5 * 60 * 1000;
   }
 
-  /**
-   * Create a streaming recognizer for a socket connection
-   */
-  createRecognizeStream(socketId, languageCode = 'en-US', sampleRateHertz = 48000, retryDelay = 1000) {
-    console.log(`Creating recognize stream for socket ${socketId}`);
-
-    this.cleanup(socketId);
-
-    const streamInfo = {
-      stream: null,
-      socket: null,
-      restartTimer: null,
-      languageCode,
-      sampleRateHertz,
-      lastRestart: Date.now(),
-      retryDelay,
-    };
-
-    this.recognizeStreams.set(socketId, streamInfo);
-    
-    // Setup restart timer
-    const setupRestartTimer = () => {
-      if (streamInfo.restartTimer) {
-        clearTimeout(streamInfo.restartTimer);
-      }
-      
-      streamInfo.restartTimer = setTimeout(() => {
-        console.log(`Restarting speech recognition for socket ${socketId} to prevent timeout`);
-        this.createRecognizeStream(socketId, languageCode, sampleRateHertz);
-      }, this.STREAM_TIMEOUT);
-    };
-    
-    const request = {
-      config: {
-        encoding: 'LINEAR16',
-          sampleRateHertz: sampleRateHertz,
-        languageCode: languageCode,
-        model: 'latest_long',
-        useEnhanced: true,
-        enableAutomaticPunctuation: true,
-        enableWordTimeOffsets: true,
-        metadata: {
-          interactionType: 'DISCUSSION',
-          microphoneDistance: 'NEARFIELD',
-          recordingDeviceType: 'SMARTPHONE',
-          originalMediaType: 'AUDIO',
-        },
-        speechContexts: [{
-          phrases: [
-            'WebRTC', 'video', 'chat', 'microphone', 'camera', 'speaker', 'connection',
-            'Hello', 'Hi', 'Hey', 'How are you', 'Can you hear me', 'Thanks', 'Bye'
-          ],
-          boost: 20.0
-        }]
-      },
-      interimResults: true, // Get interim results
-      singleUtterance: false
-    };
-
-    const recognizeStream = this.client
-      .streamingRecognize(request);
-      
-    // Store the stream in our stream info
-    streamInfo.stream = recognizeStream;
-    
-    // Set up event handlers
-    recognizeStream
-      .on('error', (err) => {
-        console.error('Error in speech recognition stream:', {
-          error: err.message,
-          code: err.code,
-          details: err.details,
-          socketId: socketId
-        });
-        
-        // Recover with exponential backoff — cap at 30 s, give up after 5 min total.
-        const nextDelay = Math.min((streamInfo.retryDelay || 1000) * 2, 30000);
-        const elapsed = Date.now() - (streamInfo.lastRestart || Date.now());
-        if (elapsed > 5 * 60 * 1000) {
-          console.error(`[STT] Giving up on socket ${socketId} after 5 min of failures`);
-          this.cleanup(socketId);
-          return;
-        }
-        console.log(`[STT] Retrying in ${nextDelay / 1000}s for socket ${socketId}`);
-        setTimeout(() => {
-          const info = this.recognizeStreams.get(socketId);
-          const socket = info?.socket;
-          this.createRecognizeStream(socketId, languageCode, sampleRateHertz, nextDelay);
-          if (socket) this.bindSocketToStream(socketId, socket);
-        }, nextDelay);
-      })
-      .on('data', (data) => {
-        // Reset the restart timer on each data event
-        setupRestartTimer();
-        try {
-          const result = data.results[0];
-          
-          // Only process if we have a valid result with alternatives
-          if (!result || !result.alternatives || result.alternatives.length === 0) {
-            return;
-          }
-          
-          const isFinal = result.isFinal;
-          const transcript = result.alternatives[0].transcript || '';
-          const stability = result.stability;
-          
-          // Log the transcript
-          console.log(`[${isFinal ? 'FINAL' : 'INTERIM'}] ${transcript}`, { 
-            stability,
-            confidence: result.alternatives[0].confidence
-          });
-          
-          // Get the socket and emit the transcript
-          const socket = this.recognizeStreams.get(socketId)?.socket;
-          if (socket) {
-            socket.emit('transcript', { 
-              transcript, 
-              isFinal,
-              stability,
-              confidence: result.alternatives[0].confidence
-            });
-          }
-          
-          // If this is a final result, we can optionally do something with it
-          if (isFinal) {
-            console.log('Final transcript:', transcript);
-          }
-        } catch (error) {
-          console.error('Error processing speech recognition result:', error);
-        }
-      })
-      .on('end', () => {
-        console.log(`Speech recognition stream ended for socket ${socketId}`);
-        // Optionally create a new stream if needed
-        // this.createRecognizeStream(socketId, languageCode);
-      });
-
-    this.recognizeStreams.set(socketId, {
-      stream: recognizeStream,
-      socket: null,
-      languageCode,
-      sampleRateHertz,
-    });
-
-    return recognizeStream;
-  }
-
-  /**
-   * Bind a socket to a recognize stream
-   */
-  bindSocketToStream(socketId, socket) {
-    const streamInfo = this.recognizeStreams.get(socketId);
-    if (streamInfo) {
-      streamInfo.socket = socket;
-      
-      // Clean up on socket disconnect
-      socket.on('disconnect', () => {
-        console.log(`Client ${socketId} disconnected, cleaning up speech recognition`);
-        this.cleanup(socketId);
-      });
-    } else {
-      // If no stream exists yet, create one
-      this.createRecognizeStream(socketId);
-      this.recognizeStreams.get(socketId).socket = socket;
-      this.recognizeStreams.get(socketId).socket.on('disconnect', () => {
-        console.log(`Client ${socketId} disconnected, cleaning up speech recognition`);
-        this.cleanup(socketId);
-      });
-    }
-  }
-
-  /**
-   * Process audio data
-   */
-  processAudio(socketId, data) {
-    let streamInfo = this.recognizeStreams.get(socketId);
-    if (!streamInfo || !streamInfo.stream || !streamInfo.stream.writable) {
-      console.error(`No valid stream found for socket ${socketId}`);
+  /** Register a participant without opening a billable cloud stream. */
+  bindSocketToStream(socketId, socket, onTranscript, onStatus) {
+    const previous = this.recognizeStreams.get(socketId);
+    if (previous) {
+      previous.socket = socket;
+      previous.onTranscript = onTranscript;
+      previous.onStatus = onStatus;
       return;
     }
+    this.recognizeStreams.set(socketId, {
+      socket, onTranscript, onStatus, stream: null, restartTimer: null, retryTimer: null,
+      languageCode: this.languageCode, sampleRateHertz: 16000, status: 'ready',
+      retryDelay: 1000, failureStartedAt: null, unavailable: false,
+      droppedAt: null, budget: null,
+      streamStartedAt: null, audioMs: 0, finalEndMs: 0, audioHistory: [],
+    });
+  }
 
-    // Recreate the stream if the client's actual sample rate differs from what
-    // was configured — this happens on Macs where AudioContext defaults to 44100.
-    const incomingRate = data.sampleRate;
-    if (incomingRate && streamInfo.sampleRateHertz && incomingRate !== streamInfo.sampleRateHertz) {
-      console.log(`[STT] Sample rate mismatch (configured ${streamInfo.sampleRateHertz}, got ${incomingRate}) — recreating stream`);
-      const socket = streamInfo.socket;
-      const lang = streamInfo.languageCode || 'en-US';
-      this.createRecognizeStream(socketId, lang, incomingRate);
-      if (socket) this.bindSocketToStream(socketId, socket);
-      streamInfo = this.recognizeStreams.get(socketId);
-      if (!streamInfo || !streamInfo.stream) return;
+  /** Replace a cloud stream while preserving the participant and retry state. */
+  createRecognizeStream(socketId, languageCode, sampleRateHertz) {
+    const info = this.recognizeStreams.get(socketId);
+    if (!info || !info.socket.connected || info.unavailable) return null;
+    if (languageCode) info.languageCode = languageCode;
+    if (sampleRateHertz && sampleRateHertz !== info.sampleRateHertz) {
+      info.audioHistory = [];
+      info.finalEndMs = info.audioMs;
+    }
+    if (sampleRateHertz) info.sampleRateHertz = sampleRateHertz;
+    this._stopStream(info);
+    if ([...this.recognizeStreams.values()].filter(entry => entry.stream).length >= this.maxStreams) {
+      info.unavailable = true;
+      this.telemetry.record('speech_unavailable');
+      this._status(socketId, info, { status: 'unavailable', reason: 'capacity', retryable: true });
+      return null;
     }
 
+    let stream;
     try {
-      // If we received a buffer array, convert it back to a Buffer
-      let audioBuffer;
-      if (Array.isArray(data.buffer)) {
-        audioBuffer = Buffer.from(Int16Array.from(data.buffer).buffer);
-      } else if (data.buffer && data.buffer.type === 'Buffer') {
-        audioBuffer = Buffer.from(data.buffer.data);
-      } else if (Buffer.isBuffer(data.buffer)) {
-        audioBuffer = data.buffer;
-      } else if (data.buffer) {
-        audioBuffer = Buffer.from(data.buffer);
-      } else {
-        console.error('Invalid audio data format:', data);
-        return;
-      }
-
-      // Write the audio data to the recognition stream
-      if (audioBuffer && audioBuffer.length > 0) {
-        streamInfo.stream.write(audioBuffer);
-      }
-
-      // If this is the final chunk, end the stream
-      if (data.isFinal) {
-        console.log('Received final audio chunk, ending stream');
-        streamInfo.stream.end();
-      }
+      this.client ||= new speech.SpeechClient();
+      stream = this.client.streamingRecognize({
+        config: {
+          encoding: 'LINEAR16', sampleRateHertz: info.sampleRateHertz,
+          languageCode: info.languageCode, model: 'latest_long',
+          enableAutomaticPunctuation: true,
+        },
+        interimResults: true,
+        singleUtterance: false,
+      });
     } catch (error) {
-      console.error('Error processing audio data:', error);
+      this._retry(socketId, info, error);
+      return null;
+    }
+    const replay = this._replay(info);
+    const streamBaseMs = replay.length ? replay[0].startMs : info.audioMs;
+    info.stream = stream;
+    this.telemetry.record('speech_started');
+    info.streamStartedAt = this.now();
+    this._status(socketId, info, { status: 'starting' });
+    info.restartTimer = this.setTimer(() => {
+      if (this.recognizeStreams.get(socketId) === info) {
+        this.telemetry.record('speech_rotated');
+        this.createRecognizeStream(socketId);
+      }
+    }, this.STREAM_TIMEOUT);
+
+    stream.on('data', (data) => {
+      if (info.stream !== stream || this.recognizeStreams.get(socketId) !== info) return;
+      info.failureStartedAt = null;
+      info.retryDelay = 1000;
+      if (info.status !== 'active') this._status(socketId, info, { status: 'active' });
+      for (const result of data.results || []) {
+        const alternative = result.alternatives?.[0];
+        if (!alternative?.transcript) continue;
+        const end = result.resultEndTime;
+        const seconds = Number(end?.seconds ?? 0);
+        const nanos = Number(end?.nanos ?? 0);
+        const relativeMs = seconds * 1000 + nanos / 1e6;
+        const endMs = end && Number.isFinite(relativeMs) && relativeMs >= 0
+          ? Math.min(info.audioMs, streamBaseMs + relativeMs) : null;
+        if (endMs !== null && endMs <= info.finalEndMs) continue;
+        if (result.isFinal) info.finalEndMs = endMs ?? info.audioMs;
+        const transcript = {
+          transcript: alternative.transcript, isFinal: Boolean(result.isFinal),
+          stability: result.stability, confidence: alternative.confidence, isLocal: true,
+        };
+        info.socket.emit('transcript', transcript);
+        if (info.onTranscript) info.onTranscript(transcript);
+      }
+    });
+    stream.on('error', (error) => {
+      if (info.stream === stream) this._retry(socketId, info, error);
+    });
+    stream.on('end', () => {
+      if (info.stream === stream) this._retry(socketId, info, new Error('Speech stream ended'));
+    });
+    for (const entry of replay) {
+      if (info.stream !== stream || !stream.writable || stream.writableNeedDrain) { this._dropped(socketId, info); break; }
+      try { stream.write(entry.buffer); this.telemetry.record('speech_replayed'); }
+      catch (error) { this._retry(socketId, info, error); break; }
+    }
+    return info.stream;
+  }
+
+  _replay(info) {
+    const cutoff = Math.max(info.finalEndMs, info.audioMs - 5000);
+    return info.audioHistory.filter(entry => entry.endMs > cutoff).map(entry => {
+      const samples = Math.max(0, Math.ceil((cutoff - entry.startMs) * info.sampleRateHertz / 1000));
+      return { ...entry, buffer: entry.buffer.subarray(samples * 2),
+        startMs: entry.startMs + samples / info.sampleRateHertz * 1000 };
+    }).filter(entry => entry.buffer.length);
+  }
+
+  _retry(socketId, info, error) {
+    if (this.recognizeStreams.get(socketId) !== info || !info.socket.connected) return;
+    this._stopStream(info);
+    if ([3, 7, 16].includes(error.code)) {
+      info.unavailable = true;
+      this.telemetry.record('speech_unavailable');
+      this._status(socketId, info, { status: 'unavailable', reason: 'configuration', retryable: false });
+      return;
+    }
+    info.failureStartedAt ??= this.now();
+    if (this.now() - info.failureStartedAt >= this.MAX_FAILURE_MS) {
+      info.unavailable = true;
+      this.telemetry.record('speech_unavailable');
+      this._status(socketId, info, { status: 'unavailable', reason: 'provider', retryable: true });
+      return;
+    }
+    this.telemetry.failure('speech_retry', Number.isInteger(error.code) && error.code >= 0 && error.code <= 16 ? error.code : undefined);
+    this._status(socketId, info, { status: 'reconnecting' });
+    const delay = info.retryDelay;
+    info.retryDelay = Math.min(delay * 2, 30000);
+    info.retryTimer = this.setTimer(() => {
+      info.retryTimer = null;
+      if (this.recognizeStreams.get(socketId) === info && info.socket.connected) {
+        this.createRecognizeStream(socketId);
+      }
+    }, delay);
+  }
+
+  _status(socketId, info, data) {
+    if (this.recognizeStreams.get(socketId) !== info || !info.socket.connected) return;
+    info.status = data.status;
+    info.socket.emit('captionStatus', data);
+    if (info.onStatus) info.onStatus(data);
+  }
+
+  _dropped(socketId, info) {
+    this.telemetry.record('audio_dropped');
+    const now = this.now();
+    if (info.droppedAt === null || now - info.droppedAt >= 5000) {
+      info.droppedAt = now;
+      this._status(socketId, info, { status: 'limited' });
     }
   }
 
-  /**
-   * Clean up resources
-   */
-  cleanup(socketId) {
-    const streamInfo = this.recognizeStreams.get(socketId);
-    if (streamInfo) {
-      // Clear any pending restart timer
-      if (streamInfo.restartTimer) {
-        clearTimeout(streamInfo.restartTimer);
-      }
-      
-      // Destroy the stream if it exists
-      if (streamInfo.stream && !streamInfo.stream.destroyed) {
-        try {
-          streamInfo.stream.destroy();
-        } catch (err) {
-          console.error('Error destroying stream:', err);
-        }
-      }
-      
-      // Remove from the map
-      this.recognizeStreams.delete(socketId);
-      console.log(`Cleaned up speech recognition for socket ${socketId}`);
+  _stopStream(info) {
+    this.clearTimer(info.restartTimer);
+    this.clearTimer(info.retryTimer);
+    info.restartTimer = null;
+    info.retryTimer = null;
+    const stream = info.stream;
+    // Invalidate first: events from a destroyed stream must not restart it.
+    info.stream = null;
+    if (stream && !stream.destroyed) stream.destroy();
+  }
+
+  /** Accept bounded PCM chunks only from a registered, connected participant. */
+  processAudio(socketId, data) {
+    const info = this.recognizeStreams.get(socketId);
+    if (!info || !info.socket.connected || info.retryTimer || info.unavailable) return;
+    if (!data || !VALID_SAMPLE_RATES.has(data.sampleRate)) return;
+
+    let audioBuffer;
+    if (Array.isArray(data.buffer)) {
+      if (data.buffer.length > 8192 || !data.buffer.every(
+        value => Number.isInteger(value) && value >= -32768 && value <= 32767
+      )) return;
+      audioBuffer = Buffer.alloc(data.buffer.length * 2);
+      data.buffer.forEach((value, index) => audioBuffer.writeInt16LE(value, index * 2));
+    } else if (Buffer.isBuffer(data.buffer)) {
+      audioBuffer = data.buffer;
+    } else {
+      return;
     }
+    if (!audioBuffer.length || audioBuffer.length > 16384 || audioBuffer.length % 2) return;
+    // Bound accepted audio to real-time throughput with a one-second burst.
+    // Counting samples also catches oversized chunks below the packet rate limit.
+    const now = this.now();
+    const budget = info.budget;
+    if (!budget) {
+      info.budget = { tokens: 2000, at: now };
+    } else {
+      budget.tokens = Math.min(2000, budget.tokens + Math.max(0, now - budget.at));
+      budget.at = now;
+    }
+    const duration = audioBuffer.length / 2 / data.sampleRate * 1000;
+    if (info.budget.tokens < duration) { this._dropped(socketId, info); return; }
+    info.budget.tokens -= duration;
+    if (info.stream && info.sampleRateHertz !== data.sampleRate && now - info.streamStartedAt < 5000) {
+      this._dropped(socketId, info);
+      return;
+    }
+    if (!info.stream || info.sampleRateHertz !== data.sampleRate) {
+      this.createRecognizeStream(socketId, info.languageCode, data.sampleRate);
+    }
+    if (!info.stream?.writable) return;
+    // Do not accumulate delayed audio when the provider applies backpressure.
+    if (info.stream.writableNeedDrain) { this._dropped(socketId, info); return; }
+    try {
+      const entry = { startMs: info.audioMs, endMs: info.audioMs + duration, buffer: Buffer.from(audioBuffer) };
+      info.audioMs += duration;
+      info.audioHistory.push(entry);
+      while (info.audioHistory.length > 1024 || info.audioHistory[0]?.endMs <= info.audioMs - 5000) info.audioHistory.shift();
+      info.stream.write(audioBuffer);
+    } catch (error) {
+      this._retry(socketId, info, error);
+    }
+  }
+
+  /** Cancel every timer and invalidate all callbacks on participant departure. */
+  cleanup(socketId) {
+    const info = this.recognizeStreams.get(socketId);
+    if (!info) return;
+    this.recognizeStreams.delete(socketId);
+    this._stopStream(info);
   }
 }
 
 module.exports = new SpeechToTextService();
+module.exports.SpeechToTextService = SpeechToTextService;

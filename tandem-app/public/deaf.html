@@ -23,13 +23,17 @@
 
     <div class="call-status">
       <div id="status-dot" class="status-dot waiting"></div>
-      <span id="status-text" class="call-status-text">Initializing…</span>
+      <span id="status-text" class="call-status-text" role="status">Initializing…</span>
     </div>
 
     <div class="room-tag" id="roomTag" style="display:none">
       Room <span id="roomTagCode"></span>
     </div>
 
+    <div class="caption-tools">
+      <span id="captionStatus" class="caption-provider-status" role="status">Checking captions…</span>
+      <button id="captionAction" class="caption-action" type="button" hidden>Start captions</button>
+    </div>
     <span class="role-badge badge-deaf">Deaf / HoH</span>
   </header>
 
@@ -55,7 +59,7 @@
 
       <!-- PIP: hearing user -->
       <div class="stage-pip" title="Hearing user">
-        <video id="remoteVideo" autoplay playsinline></video>
+        <video id="remoteVideo" autoplay playsinline muted></video>
       </div>
 
       <!-- ASL hero overlay -->
@@ -64,7 +68,7 @@
           <span class="asl-hero-letter" id="aslPrediction"></span>
           <div class="asl-hero-sub">
             <span class="asl-building" id="aslHistoryLine"></span>
-            <span class="asl-status-tag" id="aslStatus">Loading…</span>
+            <span class="asl-status-tag" id="aslStatus">Experimental recognition is off</span>
           </div>
         </div>
       </div>
@@ -74,7 +78,7 @@
     <aside class="call-sidebar">
 
       <!-- Avatar section -->
-      <div class="sidebar-panel" style="flex:1; min-height:0;">
+      <div class="sidebar-panel" id="avatarSection" style="flex:0 1 180px; min-height:0;" hidden>
         <div class="sidebar-panel-head">
           <div class="sidebar-panel-dot dot-dim"></div>
           <span class="sidebar-panel-title">Signing Avatar</span>
@@ -87,10 +91,32 @@
       <!-- Their speech captions -->
       <div class="sidebar-panel" style="flex-shrink:0;">
         <div class="captions-pane" id="remoteSubtitleStrip">
-          <p class="captions-label">Hearing user says</p>
+          <p class="captions-label">Peer’s speech</p>
+          <p id="peerCaptionStatus" class="peer-caption-status" role="status">Waiting for your peer…</p>
           <p id="remoteCaptions" class="captions-text">Waiting for speech…</p>
         </div>
       </div>
+
+
+      <section class="sidebar-panel conversation-panel" aria-labelledby="conversationTitle">
+        <h2 id="conversationTitle" class="conversation-title">Conversation</h2>
+        <div id="conversationLog" class="conversation-log" role="log" aria-live="polite" aria-relevant="additions" aria-label="Sent replies" tabindex="0">
+          <p class="conversation-empty">You can type a reply at any time. It will appear here after you send it.</p>
+        </div>
+        <form id="replyForm" class="reply-form">
+          <label for="replyText">Your reply</label>
+          <textarea id="replyText" rows="3" maxlength="1000" placeholder="Type your reply…" aria-describedby="replyHint replyStatus"></textarea>
+          <p id="replyHint" class="reply-hint">Enter to send · Shift + Enter for a new line</p>
+          <label class="reply-speech"><input id="replySpeak" type="checkbox" disabled><span id="speechOutputHint">Read this reply aloud to your peer</span></label>
+          <div id="recognitionDraft" class="recognition-draft" hidden>
+            <p>Recognized letters: <span id="recognitionRaw"></span></p>
+            <p>Suggested word: <span id="recognitionSuggestion"></span></p>
+            <button id="useRecognitionDraft" type="button">Add to reply</button>
+          </div>
+          <button id="replySend" type="submit" disabled>Send reply</button>
+          <p id="replyStatus" class="reply-status" role="status">Connecting to the room…</p>
+        </form>
+      </section>
 
     </aside>
   </div>
@@ -114,6 +140,7 @@
         </svg>
         Camera
       </button>
+      <button id="toggleSpeaker" class="ctrl-btn" type="button" aria-pressed="false" aria-label="Turn on peer audio">Peer audio off</button>
     </div>
 
     <div class="ctrl-divider"></div>
@@ -171,21 +198,12 @@
     }).observe(remoteCap, { childList: true, characterData: true, subtree: true });
   }
 
-  // Status dot
-  const statusEl = document.getElementById('status-text');
-  const dotEl = document.getElementById('status-dot');
-  new MutationObserver(() => {
-    const t = (statusEl.textContent || '').toLowerCase();
-    dotEl.className = 'status-dot ' + (
-      t.includes('error') ? 'error' :
-      (t.includes('connect') && !t.includes('error')) ? 'connected' : 'waiting'
-    );
-  }).observe(statusEl, { childList: true, characterData: true, subtree: true });
 })();
 </script>
 
 <script src="/avatar.js" type="module"></script>
 <script src="/socket.io/socket.io.js"></script>
+<script src="/conversation.js"></script>
 <script src="/script.js" type="module"></script>
 <script src="/deaf.js" type="module"></script>
 </body>

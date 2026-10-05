@@ -1,321 +1,158 @@
-const path = require('path');
+const path = require('node:path');
+const http = require('node:http');
+const { randomUUID } = require('node:crypto');
 const express = require('express');
-const http = require('http');
 const { Server } = require('socket.io');
-// All server-side modules live under server/ for a clean layout
-const speechToText = require('./server/speechToText');
-const poseProxy = require('./server/poseProxy');
-const tts = require('./server/textToSpeech');
-const { interpretLetters, interpretSentence } = require('./server/claudeService');
+const { registerCallProtocol } = require('./server/callProtocol');
+const { createAccess, createRateLimit, positiveInteger } = require('./server/access');
+const { createIceConfig } = require('./server/iceConfig');
+const { createObservability } = require('./server/observability');
 
-const app = express();
-const server = http.createServer(app);
-
-// In production set ALLOWED_ORIGIN to your domain (e.g. https://tandem.example.com).
-// In development it defaults to * so localhost and ngrok both work without config.
-const allowedOrigin = process.env.ALLOWED_ORIGIN || '*';
-
-const io = new Server(server, {
-  serveClient: true,
-  pingTimeout: 20000,
-  pingInterval: 10000,
-  cors: { origin: allowedOrigin, methods: ['GET', 'POST'] },
-  allowEIO3: true,
-  transports: ['websocket', 'polling'],
-});
-
-app.use(express.json());
-// Bypass the ngrok browser warning interstitial — without this header,
-// the second device sees an ngrok warning page instead of the app.
-app.use((_req, res, next) => {
-  res.setHeader('ngrok-skip-browser-warning', 'true');
-  next();
-});
-app.use(express.static(path.join(__dirname, 'public')));
-app.use(poseProxy);
-
-// Simple in-memory rate limiter for /api/predict: max 30 req/s per IP.
-// Resets every second — no external dependency needed.
-const predictRateMap = new Map();
-function predictRateLimit(req, res, next) {
-  const ip = req.ip || 'unknown';
-  const now = Date.now();
-  const entry = predictRateMap.get(ip) || { count: 0, resetAt: now + 1000 };
-  if (now > entry.resetAt) { entry.count = 0; entry.resetAt = now + 1000; }
-  entry.count++;
-  predictRateMap.set(ip, entry);
-  if (entry.count > 30) return res.status(429).json({ error: 'Too many requests' });
-  next();
-}
-// Prune stale entries every 60 s so the map doesn't grow unbounded.
-setInterval(() => {
-  const now = Date.now();
-  for (const [ip, e] of predictRateMap) if (now > e.resetAt + 5000) predictRateMap.delete(ip);
-}, 60000);
-
-// Proxy /api/predict → Python asl_api.py on port 5003
-// This keeps the browser on a same-origin URL and avoids CORS entirely.
-app.post('/api/predict', predictRateLimit, async (req, res) => {
-  try {
-    const upstream = await fetch('http://localhost:5003/predict', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(req.body),
-    });
-    const data = await upstream.json();
-    res.status(upstream.status).json(data);
-  } catch (err) {
-    console.error('[/api/predict] Python ASL API unreachable:', err.message);
-    res.status(503).json({ error: 'ASL API unavailable. Make sure asl_api.py is running.' });
-  }
-});
-
-// Unique token generated on each server start.
-// Clients compare this to their saved value; a mismatch means the server
-// restarted and they should hard-reload to get a fresh RTCPeerConnection.
-const SERVER_INSTANCE_ID = Date.now().toString();
-
-app.get('/health', (_req, res) => res.status(200).send('OK'));
-app.get('/instance-id', (_req, res) => res.json({ id: SERVER_INSTANCE_ID }));
-
-app.get('/ice-config', (req, res) => {
-  const iceServers = [{ urls: 'stun:stun.l.google.com:19302' }];
-
-  if (process.env.TURN_URLS && process.env.TURN_USERNAME && process.env.TURN_CREDENTIAL) {
-    iceServers.push({
-      urls: process.env.TURN_URLS.split(',').map(u => u.trim()),
-      username: process.env.TURN_USERNAME,
-      credential: process.env.TURN_CREDENTIAL,
-      credentialType: 'password',
-    });
-  } else if (process.env.NODE_ENV === 'production') {
-    console.warn('[ice-config] TURN_URLS/TURN_USERNAME/TURN_CREDENTIAL not set — cross-network calls will fail');
-  }
-
-  res.set('Cache-Control', 'no-store, no-cache, must-revalidate, private');
-  res.json(iceServers);
-});
-
-const ROOM_CODE_RE = /^[A-Z0-9]{4,12}$/;
-
-function getRoomSize(roomName) {
-  const room = io.sockets.adapter.rooms.get(roomName);
-  return room ? room.size : 0;
-}
-
-io.on('connection', (socket) => {
-  console.log('Client connected:', socket.id);
-
-  socket.conn.on('heartbeat', () => {
-    socket.lastHeartbeat = Date.now();
+/** Build an isolated application; imports never open a port or call an AI provider. */
+function createApplication({ env = process.env, speech, interpretLetters, synthesize, logger } = {}) {
+  const telemetry = createObservability({ env, logger });
+  let draining = false;
+  const access = createAccess(env);
+  const iceConfig = createIceConfig(env);
+  const speechEnabled = env.ENABLE_SPEECH === 'true' ||
+    (env.ENABLE_SPEECH !== 'false' && Boolean(env.GOOGLE_APPLICATION_CREDENTIALS));
+  const capabilities = {
+    captions: speechEnabled,
+    speechOutput: speechEnabled && env.ENABLE_SPEECH_OUTPUT !== 'false',
+    recognition: env.ENABLE_ASL === 'true',
+    suggestions: env.ENABLE_ASL === 'true' && Boolean(env.ANTHROPIC_API_KEY),
+    avatar: env.ENABLE_AVATAR === 'true',
+    privateRooms: access.required,
+  };
+  const app = express();
+  app.set('trust proxy', positiveInteger(env.TRUST_PROXY_HOPS, 0, 0, 5));
+  const server = http.createServer(app);
+  const connectionRate = createRateLimit({ limit: 60, interval: 60000 });
+  const io = new Server(server, {
+    serveClient: true, pingTimeout: 20000, pingInterval: 10000,
+    maxHttpBufferSize: 128 * 1024,
+    allowRequest: (request, callback) => callback(null, access.originAllowed(request) && connectionRate(request.socket.remoteAddress)),
+    transports: ['websocket', 'polling'],
   });
-
-  socket.on('error', (error) => {
-    console.error(`Socket error from ${socket.id}:`, error);
+  const { SpeechToTextService } = require('./server/speechToText');
+  const maxStreams = Number(env.MAX_CAPTION_STREAMS || 20);
+  speech ||= new SpeechToTextService({ languageCode: env.LANGUAGE_CODE || 'en-US',
+    maxStreams: Number.isInteger(maxStreams) && maxStreams > 0 ? maxStreams : 20, telemetry });
+  interpretLetters ||= letters => require('./server/claudeService').interpretLetters(letters);
+  synthesize ||= text => require('./server/textToSpeech').synthesize(text);
+  const protocol = registerCallProtocol(io, { telemetry, speech, interpretLetters, synthesize, capabilities, authorizeRoom: (data) => !access.required || Boolean(access.verify(data.token, data.room)) });
+  app.disable('x-powered-by');
+  app.use((_req, res, next) => {
+    const started = performance.now();
+    res.once('finish', () => telemetry.observe((performance.now() - started) / 1000));
+    next();
   });
-
-  const keepAlive = setInterval(() => {
-    if (socket.connected) socket.emit('ping');
-  }, 30000);
-
-  socket.on('reconnect_attempt', (attemptNumber) => {
-    console.log(`Client ${socket.id} reconnection attempt ${attemptNumber}`);
+  app.use(express.json({ limit: '16kb' }));
+  app.use((_req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'no-referrer');
+    next();
   });
+  const roomRate = createRateLimit({ limit: 10, interval: 3600000 });
+  const poseRate = createRateLimit({ limit: 10, interval: 60000 });
+  const iceRate = createRateLimit({ limit: 30, interval: 60000 });
+  app.post('/api/rooms', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!access.originAllowed(req)) return res.status(403).json({ error: 'Origin is not allowed.' });
+    if (!roomRate(req.ip)) return res.status(429).set('Retry-After', '3600').json({ error: 'Too many invitations. Try again later.' });
+    res.status(201).json(access.mint());
+  });
+  app.post('/api/rooms/validate', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!access.originAllowed(req)) return res.status(403).json({ error: 'Origin is not allowed.' });
+    const invitation = access.verify(access.bearer(req), req.body?.room);
+    if (!invitation) return res.status(403).json({ error: 'Invitation is invalid or expired.' });
+    res.json({ room: invitation.room, expiresAt: invitation.exp });
+  });
+  app.use(['/api/predict', '/pose'], (req, res, next) => {
+    if (access.required && !access.verify(access.bearer(req))) return res.status(403).json({ error: 'A valid invitation is required.' });
+    if (req.originalUrl.split('?')[0] === '/pose' && !poseRate(req.ip)) return res.status(429).set('Retry-After', '60').json({ error: 'Too many signing requests.' });
+    next();
+  });
+  app.use(express.static(path.join(__dirname, 'public')));
+  if (capabilities.avatar) app.use(require('./server/poseProxy').createPoseProxy({ telemetry }));
+  else app.get('/pose', (_req, res) => res.status(503).json({ error: 'Signing avatar is disabled.' }));
 
-  speechToText.createRecognizeStream(socket.id);
-  speechToText.bindSocketToStream(socket.id, socket);
-
-  socket.on('audioData', (data) => {
-    try {
-      speechToText.processAudio(socket.id, data);
-    } catch (error) {
-      console.error('Error processing audio data:', error);
+  const predictRates = new Map();
+  app.post('/api/predict', async (req, res) => {
+    if (!capabilities.recognition) return res.status(503).json({ error: 'Experimental recognition is disabled.' });
+    const landmarks = req.body?.landmarks;
+    if (!Array.isArray(landmarks) || landmarks.length !== 63 || !landmarks.every(
+      value => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 10
+    )) return res.status(400).json({ error: 'Expected 63 finite landmark coordinates.' });
+    const now = Date.now();
+    const ip = req.ip;
+    let rate = predictRates.get(ip);
+    if (!rate || now >= rate.until) {
+      rate = { count: 0, until: now + 1000 };
+      if (predictRates.size >= 10000) {
+        for (const [key, entry] of predictRates) if (now >= entry.until) predictRates.delete(key);
+        if (predictRates.size >= 10000) return res.status(429).json({ error: 'Too many requests.' });
+      }
+      predictRates.set(ip, rate);
     }
-  });
-
-  // STT sentence buffer — merges rapid successive STT finals before forwarding.
-  const sentenceBuffer = { text: '', timer: null };
-  const SENTENCE_HOLD_MS = 600;
-
-  // ASL sentence buffer — accumulates Claude-interpreted words until the user
-  // pauses signing for 3 s, then flushes as a complete sentence.
-  const aslSentenceBuffer = { words: [], timer: null };
-  const ASL_SENTENCE_HOLD_MS = 3000;
-
-  socket.on('transcript', (data) => {
-    if (!socket.room) return;
-    if (!data.isFinal) {
-      socket.to(socket.room).emit('transcript', {
-        transcript: data.transcript,
-        isFinal: false,
-        isLocal: false,
+    if (++rate.count > 20) return res.status(429).json({ error: 'Too many requests.' });
+    try {
+      const upstream = await fetch(env.ASL_API_URL || 'http://127.0.0.1:5003/predict', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ landmarks }), signal: AbortSignal.timeout(3000),
       });
-      return;
-    }
-
-    clearTimeout(sentenceBuffer.timer);
-    sentenceBuffer.text = (sentenceBuffer.text + ' ' + data.transcript).trim();
-
-    sentenceBuffer.timer = setTimeout(() => {
-      const merged = sentenceBuffer.text;
-      sentenceBuffer.text = '';
-      sentenceBuffer.timer = null;
-      if (merged) {
-        console.log('[sentence-buffer] forwarding merged final:', merged);
-        socket.to(socket.room).emit('transcript', {
-          transcript: merged,
-          isFinal: true,
-          isLocal: false,
-        });
-      }
-    }, SENTENCE_HOLD_MS);
-  });
-
-  // Single consolidated disconnect handler — previously this was split across
-  // two separate socket.on('disconnect') calls (a bug that caused the second
-  // handler to silently shadow the first).
-  socket.on('disconnect', (reason) => {
-    console.log(`Client ${socket.id} disconnected:`, reason);
-    clearInterval(keepAlive);
-    clearTimeout(sentenceBuffer.timer);
-    sentenceBuffer.text = '';
-    clearTimeout(aslSentenceBuffer.timer);
-    aslSentenceBuffer.words = [];
-    if (socket.room) {
-      socket.to(socket.room).emit('peer_disconnected');
-      socket.leave(socket.room);
-    }
-    speechToText.cleanup(socket.id);
-  });
-
-  socket.on('join', ({ userType, room } = {}) => {
-    // Validate the room code — reject anything that doesn't look like one.
-    if (!room || !ROOM_CODE_RE.test(room)) {
-      socket.emit('invalid_room');
-      return;
-    }
-
-    // Evict zombie sockets so they don't block new legitimate connections.
-    const roomMembers = io.sockets.adapter.rooms.get(room);
-    if (roomMembers) {
-      for (const sid of [...roomMembers]) {
-        const s = io.sockets.sockets.get(sid);
-        if (!s || !s.connected) {
-          roomMembers.delete(sid);
-          console.log(`[io] Evicted zombie socket ${sid} from room ${room}`);
-        }
-      }
-    }
-
-    const size = getRoomSize(room);
-    socket.userType = userType || 'hearing';
-    console.log('[io] join requested', { socketId: socket.id, room, currentSize: size, userType: socket.userType });
-
-    if (size >= 2) {
-      socket.emit('room_full');
-      return;
-    }
-
-    socket.room = room;
-    socket.join(room);
-    const newSize = getRoomSize(room);
-    socket.emit('joined', { room, peers: newSize, userType: socket.userType });
-
-    if (newSize === 2) {
-      io.to(room).emit('ready');
-      socket.emit('initiate');
+      const data = await upstream.json();
+      res.status(upstream.status).json(data);
+    } catch {
+      res.status(503).json({ error: 'Recognition is unavailable. You can still type a reply.' });
     }
   });
-
-  socket.on('signal:offer', (payload) => {
-    if (socket.room) socket.to(socket.room).emit('signal:offer', payload);
+  const instanceId = randomUUID();
+  app.get('/ready', (_req, res) => res.status(draining ? 503 : 200).set('Cache-Control', 'no-store').json({ ready: !draining }));
+  app.get('/metrics', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    if (!telemetry.enabled) return res.sendStatus(404);
+    if (!telemetry.authorized(req.headers.authorization)) return res.sendStatus(403);
+    const rooms = [...io.sockets.adapter.rooms.keys()].filter(room => room.startsWith('call:')).length;
+    const streams = [...(speech.recognizeStreams?.values() || [])].filter(info => info.stream).length;
+    res.type('text/plain; version=0.0.4').send(telemetry.render({ sockets: io.sockets.sockets.size, rooms, streams, jobs: protocol.providerJobs(), ready: !draining }));
   });
-
-  socket.on('signal:answer', (payload) => {
-    if (socket.room) socket.to(socket.room).emit('signal:answer', payload);
+  app.get('/health', (_req, res) => res.status(200).send('OK'));
+  app.get('/capabilities', (_req, res) => res.set('Cache-Control', 'no-store').json(capabilities));
+  app.get('/instance-id', (_req, res) => res.json({ id: instanceId }));
+  app.get('/ice-config', (req, res) => {
+    res.set('Cache-Control', 'no-store');
+    const invitation = access.verify(access.bearer(req));
+    if (access.required && !invitation) { telemetry.record('ice_denied'); return res.status(403).json({ error: 'A valid invitation is required.' }); }
+    if (!iceRate(req.ip)) return res.status(429).set('Retry-After', '60').json({ error: 'Too many requests.' });
+    const servers = iceConfig(invitation);
+    if (env.TURN_SHARED_SECRET && servers[1]) res.set('X-Turn-Expires-At', servers[1].username.split(':')[0]);
+    telemetry.record('ice_issued');
+    res.json(servers);
   });
-
-  socket.on('signal:ice-candidate', (payload) => {
-    if (socket.room) socket.to(socket.room).emit('signal:ice-candidate', payload);
+  app.use((error, _req, res, _next) => {
+    const status = error.type === 'entity.too.large' ? 413 : error instanceof SyntaxError ? 400 : 500;
+    if (status === 500) telemetry.failure('http_failed', status);
+    res.status(status).json({ error: status === 500 ? 'Request failed.' : 'Invalid request body.' });
   });
+  return { app, server, io, capabilities,
+    close: () => { draining = true; return new Promise(resolve => io.close(resolve)); } };
+}
 
-  socket.on('signingDone', () => {
-    if (socket.room) socket.to(socket.room).emit('signingDone');
-  });
-
-  socket.on('ttsSpoken', () => {
-    if (socket.room) socket.to(socket.room).emit('ttsSpoken');
-  });
-
-  socket.on('aslPrediction', async (data) => {
-    // Individual letter updates — forwarded to peer for live display only, no TTS.
-    // TTS is triggered by aslWord (after Claude interprets the full word).
-    if (!socket.room) return;
-    socket.to(socket.room).emit('aslPrediction', {
-      prediction: data.prediction,
-      isLocal: true
+if (require.main === module) {
+  const application = createApplication();
+  const port = Number(process.env.PORT || 3000);
+  application.server.listen(port, () => console.log(`Tandem listening on http://localhost:${port}`));
+  let stopping = false;
+  for (const signal of ['SIGTERM', 'SIGINT']) {
+    process.on(signal, () => {
+      if (stopping) return;
+      stopping = true;
+      const deadline = setTimeout(() => process.exit(1), 10000).unref();
+      application.close().then(() => { clearTimeout(deadline); });
     });
-  });
+  }
+}
 
-  socket.on('aslWord', async (data) => {
-    if (!socket.room || !Array.isArray(data.letters) || data.letters.length === 0) return;
-
-    const letters = data.letters;
-    console.log(`[aslWord] letters: ${letters.join('-')}`);
-
-    // Show a pending indicator to the hearing peer while Claude works.
-    socket.to(socket.room).emit('aslWordPending', { letters });
-
-    let word;
-    try {
-      word = await interpretLetters(letters);
-    } catch (err) {
-      console.error('[aslWord] interpretLetters error:', err.message);
-      return;
-    }
-    if (!word) return;
-
-    // Show the interpreted word immediately on both sides.
-    socket.to(socket.room).emit('aslWordResult', { word, letters });
-    socket.emit('aslWordConfirm', { word });
-
-    // Accumulate into the sentence buffer and (re)start the flush timer.
-    clearTimeout(aslSentenceBuffer.timer);
-    aslSentenceBuffer.words.push(word);
-
-    aslSentenceBuffer.timer = setTimeout(async () => {
-      const words = [...aslSentenceBuffer.words];
-      aslSentenceBuffer.words = [];
-      aslSentenceBuffer.timer = null;
-      if (words.length === 0 || !socket.room) return;
-
-      console.log(`[aslSentence] flushing ${words.length} word(s): ${words.join(' ')}`);
-
-      let sentence;
-      try {
-        sentence = await interpretSentence(words);
-      } catch (err) {
-        console.error('[aslSentence] interpretSentence error:', err.message);
-        sentence = words.join(' ');
-      }
-      if (!sentence) return;
-
-      // Broadcast the final cleaned sentence and speak it.
-      socket.to(socket.room).emit('aslSentence', { sentence });
-      socket.emit('aslSentenceConfirm', { sentence });
-
-      try {
-        const audioBase64 = await tts.synthesize(sentence);
-        socket.to(socket.room).emit('ttsAudio', { audioBase64 });
-        console.log(`[TTS] "${sentence}" → sent audio to peer`);
-      } catch (err) {
-        console.error('[TTS] synthesize error:', err.message);
-      }
-    }, ASL_SENTENCE_HOLD_MS);
-  });
-});
-
-const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
-});
+module.exports = { createApplication };

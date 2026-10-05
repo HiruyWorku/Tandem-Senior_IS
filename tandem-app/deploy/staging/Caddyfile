@@ -1,0 +1,7 @@
+{$APP_HOST} {
+    # Metrics can be scraped inside the VM/container network, never through the public proxy.
+    @metrics path /metrics /metrics/*
+    respond @metrics 404
+    reverse_proxy app:3000
+    # No access log: request queries can contain conversation text.
+}

@@ -4,18 +4,22 @@
   "description": "Unified video conferencing app connecting deaf and hearing users with ASL recognition",
   "main": "server.js",
   "scripts": {
-    "start": "node --env-file=.env server.js",
-    "dev": "NODE_ENV=development node --env-file=.env server.js",
+    "start": "node --env-file-if-exists=.env server.js",
+    "dev": "NODE_ENV=development node --env-file-if-exists=.env server.js",
     "asl": "python server/asl_api.py",
     "start:all": "concurrently --kill-others-on-fail --names \"node,asl\" --prefix-colors \"cyan,green\" \"npm start\" \"npm run asl\"",
-    "test": "node --test test/smoke.test.js",
+    "test": "node --test test/*.test.js",
+    "test:browser": "playwright test",
     "asl:download": "python asl/download_dataset.py",
     "asl:collect": "python asl/collect.py",
     "asl:train": "python asl/train.py",
     "docker:build": "docker build -t tandem-app .",
-    "docker:run": "docker run --rm -p 3000:3000 --env-file .env -v \"$(pwd)/asl/model.p:/app/asl/model.p\" tandem-app"
+    "docker:run": "docker run --rm -e NODE_ENV=development -p 3000:3000 tandem-app"
   },
   "author": "Hiruy Worku",
+  "engines": {
+    "node": ">=22.16 <25"
+  },
   "license": "MIT",
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
@@ -24,5 +28,14 @@
     "concurrently": "^8.2.0",
     "express": "^4.21.2",
     "socket.io": "^4.8.1"
+  },
+  "overrides": {
+    "express": {
+      "qs": "^6.16.0"
+    }
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.63.0",
+    "socket.io-client": "^4.8.4"
   }
 }

@@ -2,6 +2,15 @@
 // Loads the pose-viewer web component and exposes window.avatar.setText
 // Assumes you serve /public as static from your server.
 (async function initAvatar() {
+  const { invitationHeaders } = await import('/invitation.js');
+  let poseObjectUrl;
+  window.addEventListener('pagehide', () => { if (poseObjectUrl) URL.revokeObjectURL(poseObjectUrl); });
+  try {
+    const response = await fetch('/capabilities');
+    if (!(await response.json()).avatar) return;
+    const section = document.getElementById('avatarSection');
+    if (section) section.hidden = false;
+  } catch { return; }
   try {
     const { defineCustomElements } = await import('https://cdn.skypack.dev/pose-viewer/loader');
     if (typeof defineCustomElements === 'function') defineCustomElements(window);
@@ -101,6 +110,7 @@
 
   class SigningQueue {
     constructor() {
+      this._generation = 0;
       this._queue = [];   // Array<{text, spoken, signed}>
       this._playing = false;
       this._timer = null;
@@ -116,13 +126,15 @@
 
     /** Immediately clear the queue and stop the current animation. */
     interrupt() {
+      this._generation++;
       this._queue = [];
       clearTimeout(this._timer);
       this._playing = false;
       setStatus('');
     }
 
-    _flush() {
+    async _flush() {
+      const generation = this._generation;
       if (this._queue.length === 0) {
         this._playing = false;
         setStatus('');
@@ -143,7 +155,13 @@
 
       try {
         setStatus('Signing…');
-        const src = buildLocalPoseUrl(text, spoken, signed);
+        const response = await fetch(buildLocalPoseUrl(text, spoken, signed), { headers: invitationHeaders(), signal: AbortSignal.timeout(10000) });
+        if (!response.ok) throw new Error('Signing unavailable.');
+        const blob = await response.blob();
+        if (generation !== this._generation) return;
+        const src = URL.createObjectURL(blob);
+        if (poseObjectUrl) URL.revokeObjectURL(poseObjectUrl);
+        poseObjectUrl = src;
         if (viewer) {
           viewer.setAttribute('src', src);
           try {
@@ -153,6 +171,7 @@
           } catch (_) { /* ignore if unsupported */ }
         }
       } catch (e) {
+        if (generation !== this._generation) return;
         console.error('[SigningQueue] render error', e);
         setStatus('Failed to render.', true);
         // Still advance the queue so one bad item doesn't stall everything.
