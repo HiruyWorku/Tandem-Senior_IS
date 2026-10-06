@@ -8,6 +8,8 @@ Use Node 24 and the non-root container. Production requires a persistent random 
 
 The app port should be reachable only through the trusted reverse proxy. Set TRUST_PROXY_HOPS to the actual proxy topology. HTTP quotas use that trust configuration; socket handshake quotas use the TCP peer IP and are shared behind a proxy. Add per-client edge limits and validate concurrency before deployment. The in-memory room adapter supports one application instance; do not scale replicas without atomic shared admission and signaling design.
 
+MAX_CONNECTIONS bounds admitted Socket.IO clients (default 100; staging 20), including middleware reservations during concurrent connection attempts. Each room still admits at most two people. Initial transport handshakes are also rejected when existing transport count reaches capacity; simultaneous handshakes can temporarily exceed that preliminary check, but namespace reservations remain bounded. UNJOINED_TIMEOUT_SECONDS (default/staging 30; range 5–300) closes connections without a call room, including abandoned raw polling transports. Active callers waiting alone in their room remain connected. After leaving a room, an otherwise idle connection closes within one check interval. These bounds protect application resources; they do not replace per-client edge limits or denial-of-service protection.
+
 ## Health and metrics
 
 - `/health`: process liveness, HTTP 200. It does not check paid providers.
@@ -30,6 +32,8 @@ Configure your platform to redact Authorization headers and request bodies. The 
 | `client_ice_failed` rises | Check ICE endpoint errors, invitation expiry, TURN reachability and secret alignment. Validate from a separate network. |
 | `speech_job_failed` / `avatar_provider_failed` rises | Check optional provider availability. Explicit text delivery remains independent. |
 | Memory or active work rises continuously | Verify departure cleanup and load limits. Capture aggregate diagnostics without recording audio or messages. |
+| `connection_rejected` rises | Check configured capacity, origin/handshake quotas and traffic pressure; do not increase limits without load evidence. |
+| `connection_idle_closed` rises | Connections never joined a call or remained without a room. Active room members are preserved. |
 
 Relay credentials renew before expiry and trigger collision-safe ICE negotiation without replacing local tracks. An expired invitation cannot renew or reconnect. Caption rotation replays only a bounded window of unfinalized audio; long utterances and outages can still lose words. Validate both behaviors using actual providers before claiming seamless long-call support.
 

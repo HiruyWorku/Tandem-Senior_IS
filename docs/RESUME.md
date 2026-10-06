@@ -45,3 +45,15 @@ Staging now configures a 900-second recognition session deadline and a 15-second
 Updated proxy-addr from 2.0.7 to 2.0.8 for [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h). The app uses numeric proxy-hop trust rather than the advisory's affected subnet configuration. Docker builds now fail on high/critical production dependency audit findings. All 63 server tests and 20 Chrome browser journeys pass; the rebuilt staging image reports zero dependency vulnerabilities.
 
 Real Google idle cutoff and deliberate restart passed with fresh peer final captions and typed delivery during automatic pause. Aggregate metrics confirmed one limit event, one provider retry during deliberately withheld PCM, no unavailable event, and zero remaining sockets/rooms/recognizers. The redeployed HTTPS/private invitation/text/forced TURN smoke checks also pass. Session expiry uses deterministic and accelerated browser tests to avoid an unnecessary paid 15-minute fixture run. Both VMs remain running.
+
+## Bounded admission checkpoint
+
+Staging now sets MAX_CONNECTIONS=20 and UNJOINED_TIMEOUT_SECONDS=30. Middleware reserves namespace admission before concurrent registration, and closes connections without a call room. Separate raw transport cleanup runs before Socket.IO's graceful polling timeout so abandoned polling clients release resources. Active callers remain connected, including one caller waiting for a partner. Initial transport checks and existing quotas provide early rejection; transient simultaneous handshakes are not a hard network-level connection cap.
+
+Server-busy namespace rejection retries after a short randomized delay while keeping the current page draft. Server-triggered disconnect also retries; page exit cancels pending retries. All 70 server tests and 22 Chrome browser journeys pass. Desktop/mobile busy-state captures and detector pass. A fresh production dependency audit reports zero vulnerabilities. Prior checkpoint CI passed: https://github.com/HiruyWorku/Tandem-Senior_IS/actions/runs/37488670320.
+
+Pre-admission rollback resources: `tandem-staging-app:before-admission-limits` and `compose.before-admission-limits.yaml`. Manual checks, including busy-state draft recovery, remain accumulated for the owner's later batch.
+
+The public staging admission harness passed: 20 clients connected, an extra client was rejected, unjoined clients closed, two admitted callers remained connected and exchanged text, and replacement admission succeeded. No microphone audio was sent. HTTPS/private invitation/text/forced TURN smoke checks also passed after rollout.
+
+Aggregate metrics confirmed one rejected connection, 18 idle closures, zero started recognition streams, and zero remaining sockets/rooms/caption streams after the checks.

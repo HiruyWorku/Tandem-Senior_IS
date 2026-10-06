@@ -11,6 +11,36 @@ test.beforeAll(async () => {
 });
 test.afterAll(async () => application.close());
 
+for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
+  test(`busy server retries without losing drafts at ${viewport.width}px`, async ({ browser }, testInfo) => {
+    const app = createApplication({ env: { REQUIRE_ROOM_TOKEN: 'false' } });
+    let busy = true;
+    app.io.use((_socket, next) => {
+      if (!busy) return next();
+      const error = new Error('Server is busy.'); error.data = { code: 'server_busy' }; next(error);
+    });
+    await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
+    const origin = `http://127.0.0.1:${app.server.address().port}`;
+    const context = await browser.newContext({ viewport });
+    await context.route(/https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com)\//, route => route.abort());
+    try {
+      const speaker = await context.newPage();
+      await speaker.goto(`${origin}/hearing.html?room=BUSYCALL`);
+      await expect(speaker.locator('#status-text')).toHaveText('Calls are busy. Retrying… Your draft is saved here.');
+      await speaker.locator('#replyText').fill('Draft preserved while server is busy');
+      await expect(speaker.locator('#replySend')).toBeDisabled();
+      await speaker.screenshot({ path: testInfo.outputPath('busy.png'), fullPage: true });
+      expect(await speaker.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      busy = false;
+      const peer = await context.newPage(); await peer.goto(`${origin}/deaf.html?room=BUSYCALL`);
+      await expect(speaker.locator('#replyStatus')).toHaveText('Ready to send.', { timeout: 12000 });
+      await expect(speaker.locator('#replyText')).toHaveValue('Draft preserved while server is busy');
+      await speaker.locator('#replySend').click();
+      await expect(peer.getByText('Draft preserved while server is busy', { exact: true })).toBeVisible();
+    } finally { await context.close(); await app.close(); }
+  });
+}
+
 async function pair(browser, options = {}) {
   const context = await browser.newContext({ viewport: { width: 1440, height: 1000 }, ...options });
   // Keep these tests independent of optional remote font/CDN availability.
@@ -240,6 +270,8 @@ test('automatic caption limit pauses recognition while video and typed replies r
 test('caption pause is independent of microphone and provider retry does not stop call tracks', async ({ browser }) => {
   const f = await captionApp({ failProvider: true }); const pages = await captionPair(browser, f);
   try {
+    await expect.poll(async () => (await Promise.all([pages.a, pages.b].map(page =>
+      page.locator('#captionAction').textContent()))).includes('Retry captions')).toBe(true);
     const failed = await pages.a.locator('#captionAction').isVisible() && await pages.a.locator('#captionAction').textContent() === 'Retry captions'
       ? pages.a : pages.b;
     await expect(failed.locator('#captionAction')).toHaveText('Retry captions');

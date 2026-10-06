@@ -23,6 +23,7 @@ Keep adding to this checklist during engineering. Run pending items together whe
 | M10 | A longer conversation spanning recognition rotation and TURN renewal. | Record actual interruptions, lost/repeated captions and recovery; coordinate duration with caption cost limits before running. | Pending |
 | M11 | Caption limits: after 15 minutes, use Start captions to continue; also check recovery after mobile interruption. | Recognition pauses with Start captions available; video/text remain usable; deliberate restart works. The 15-second idle cutoff measures missing audio packets, not silence. | Pending |
 | M12 | Evaluation with Deaf/ASL users when available. | Assess whether captions, attribution, typed reply flow and terminology meet the actual communication need. | Pending |
+| M13 | If a connection is temporarily unavailable/busy, keep an unsent draft and wait for recovery; then send. | Retry preserves the current page draft and sends it once the call is ready. Record any stuck state. | Pending |
 
 ## Engineer-verified evidence (does not replace manual checks)
 
@@ -31,6 +32,7 @@ Keep adding to this checklist during engineering. Run pending items together whe
 - One real recognition rotation passed at 270001 ms; no provider retry; largest final-result gap 5025 ms with an approximately 4.8-second repeating fixture.
 - Controlled browser-offline plus transport interruption recovered fresh captions, peer video, local tracks, draft and typed delivery. Physical radio handoff remains M04.
 - Real Google 15-second incoming-PCM idle cutoff and deliberate restart passed, including fresh peer final captions and typed delivery during pause. The session deadline is covered by deterministic rotation/retry tests and an accelerated browser journey.
+- Desktop/mobile controlled server-busy recovery preserves and delivers drafts. Local admission tests cover concurrent capacity, replacement admission, raw polling cleanup and preservation of active room members.
 - Post-test streams, sockets and rooms returned to zero. Tests use synthetic media, not measured real-user accuracy.
 
 Pause captions or leave after testing to stop paid recognition. Two active microphones count as two audio streams. Experimental ASL/avatar remain disabled; do not interpret these checks as fluent ASL translation validation.

@@ -65,6 +65,42 @@ test('invalid caption capacity and duration configuration fails closed', () => {
     { CAPTION_IDLE_SECONDS: '301' }]) assert.throws(() => createApplication({ env }));
 });
 
+test('invalid connection capacity and admission timeout fail closed', () => {
+  for (const env of [{ MAX_CONNECTIONS: '1' }, { MAX_CONNECTIONS: '10001' },
+    { UNJOINED_TIMEOUT_SECONDS: '0' }, { UNJOINED_TIMEOUT_SECONDS: 'NaN' }]) {
+    assert.throws(() => createApplication({ env }));
+  }
+});
+
+test('actual server bounds connected clients and accepts a replacement after departure', async t => {
+  const f = await fixture(t, { env: { REQUIRE_ROOM_TOKEN: 'false', MAX_CONNECTIONS: '2' } });
+  const clients = await Promise.allSettled([f.client(), f.client(), f.client(), f.client()]);
+  const accepted = clients.filter(result => result.status === 'fulfilled').map(result => result.value);
+  assert.equal(accepted.length, 2);
+  assert.equal(f.io.sockets.sockets.size, 2);
+  await join(accepted[0]); await join(accepted[1]);
+  const departed = receive(accepted[1], 'peer_disconnected');
+  accepted[0].disconnect(); await departed;
+  const replacement = await f.client();
+  assert.equal((await join(replacement)).ok, true);
+  assert.equal(f.io.sockets.sockets.size, 2);
+});
+
+test('actual server closes an unjoined client while preserving an admitted call', async t => {
+  const f = await fixture(t, { env: { REQUIRE_ROOM_TOKEN: 'false', UNJOINED_TIMEOUT_SECONDS: '5' } });
+  const a = await f.client(); const b = await f.client(); await join(a);
+  const transport = await fetch(`${f.url}/socket.io/?EIO=4&transport=polling`);
+  assert.equal(transport.status, 200);
+  assert.equal(f.io.engine.clientsCount, 3);
+  const closed = new Promise(resolve => b.once('disconnect', resolve));
+  await Promise.race([closed, wait(7000).then(() => { throw new Error('Unjoined connection did not close'); })]);
+  assert.equal(a.connected, true); assert.equal(b.connected, false);
+  assert.equal(f.io.sockets.sockets.size, 1);
+  assert.equal((await join(a)).ok, true);
+  await wait(100);
+  assert.equal(f.io.engine.clientsCount, 1);
+});
+
 test('invalid room/role payloads cannot create membership', async t => {
   const f = await fixture(t); const a = await f.client();
   for (const data of [null, {}, { room: ['ABCD'], userType: 'deaf' }, { room: 'abcd', userType: 'deaf' }]) {

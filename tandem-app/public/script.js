@@ -103,6 +103,12 @@ let polite = false;
 let peerPresent = false;
 let isSettingRemoteAnswerPending = false;
 let recoveryTimer;
+let connectionRetryTimer;
+let pageClosing = false;
+function retryConnection() {
+  clearTimeout(connectionRetryTimer);
+  connectionRetryTimer = setTimeout(() => { if (!pageClosing) socket.connect(); }, 5000 + Math.random() * 2000);
+}
 let dataChannel;
 let ignoreOffer = false;
 let pendingIceCandidates = [];
@@ -416,8 +422,23 @@ function initSocket(userType, roomCode) {
       unavailable: 'Peer captions unavailable · you can exchange typed replies', limited: 'Peer captions limited · some audio was skipped' };
     if (element) element.textContent = labels[data.status] || 'Peer captions unavailable';
   });
-  socket.on('disconnect', () => { clearTimeout(recoveryTimer); peerPresent = false; joinedRoom = false; captionRequest++; captionBusy = false; syncCapture(); setStatus('Connection interrupted. Reconnecting…'); });
-  socket.on('connect_error', () => setStatus('Connection unavailable. Retrying… Your draft is saved here.'));
+  socket.on('disconnect', reason => {
+    clearTimeout(recoveryTimer); clearTimeout(connectionRetryTimer);
+    peerPresent = false; joinedRoom = false; captionRequest++; captionBusy = false; syncCapture();
+    if (!pageClosing) {
+      setStatus('Connection interrupted. Reconnecting…');
+      if (reason === 'io server disconnect') retryConnection();
+    }
+  });
+  socket.on('connect_error', error => {
+    clearTimeout(connectionRetryTimer);
+    if (pageClosing) return;
+    if (error.data?.code === 'server_busy') {
+      setStatus('Calls are busy. Retrying… Your draft is saved here.');
+      // Namespace rejection stops Socket.IO's built-in reconnect; retry without losing the page draft.
+      retryConnection();
+    } else setStatus('Connection unavailable. Retrying… Your draft is saved here.');
+  });
   socket.on('protocolError', ({ code }) => {
     if (code === 'invalid_invitation') {
       setStatus('Invitation invalid or expired. Ask your partner for a new link.', 'error');
@@ -428,6 +449,7 @@ function initSocket(userType, roomCode) {
     if (code === 'invalid_role' || code === 'leave_room_first') setStatus('Unable to join this room. Return home and try again.');
   });
   socket.on('connect', async () => {
+    clearTimeout(connectionRetryTimer);
     console.log('[client] socket connected', socket.id);
 
     const restarted = await checkServerInstance();
@@ -710,6 +732,8 @@ window.TandemApp = {
 window.addEventListener('online', () => { if (joinedRoom) iceLease.refresh().catch(() => {}); });
 
 window.addEventListener('pagehide', () => {
+  pageClosing = true;
+  clearTimeout(connectionRetryTimer);
   iceLease.stop();
   clearTimeout(recoveryTimer);
   socket?.disconnect();

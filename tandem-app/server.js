@@ -7,6 +7,7 @@ const { registerCallProtocol } = require('./server/callProtocol');
 const { createAccess, createRateLimit, positiveInteger } = require('./server/access');
 const { createIceConfig } = require('./server/iceConfig');
 const { createObservability } = require('./server/observability');
+const { createConnectionAdmission, closeUnadmittedTransports } = require('./server/connectionAdmission');
 
 /** Build an isolated application; imports never open a port or call an AI provider. */
 function createApplication({ env = process.env, speech, interpretLetters, synthesize, logger } = {}) {
@@ -27,13 +28,24 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
   const app = express();
   app.set('trust proxy', positiveInteger(env.TRUST_PROXY_HOPS, 0, 0, 5));
   const server = http.createServer(app);
+  const maxConnections = positiveInteger(env.MAX_CONNECTIONS, 100, 2, 10000);
+  const unjoinedTimeoutMs = positiveInteger(env.UNJOINED_TIMEOUT_SECONDS, 30, 5, 300) * 1000;
   const connectionRate = createRateLimit({ limit: 60, interval: 60000 });
   const io = new Server(server, {
     serveClient: true, pingTimeout: 20000, pingInterval: 10000,
     maxHttpBufferSize: 128 * 1024,
-    allowRequest: (request, callback) => callback(null, access.originAllowed(request) && connectionRate(request.socket.remoteAddress)),
+    allowRequest: (request, callback) => {
+      const allowed = !draining && io.engine.clientsCount < maxConnections &&
+        access.originAllowed(request) && connectionRate(request.socket.remoteAddress);
+      if (!allowed) telemetry.record('connection_rejected');
+      callback(null, allowed);
+    },
+    // Enforce our transport deadline before Socket.IO begins a graceful polling close.
+    connectTimeout: unjoinedTimeoutMs + 1000,
     transports: ['websocket', 'polling'],
   });
+  io.use(createConnectionAdmission({ maxConnections, unjoinedTimeoutMs, isDraining: () => draining, telemetry }));
+  closeUnadmittedTransports(io, { unjoinedTimeoutMs, telemetry });
   const { SpeechToTextService } = require('./server/speechToText');
   const maxStreams = positiveInteger(env.MAX_CAPTION_STREAMS, 20, 1, 100);
   const maxSessionMs = positiveInteger(env.CAPTION_MAX_SESSION_SECONDS, 0, 0, 14400) * 1000;

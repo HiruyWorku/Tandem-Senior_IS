@@ -1,5 +1,6 @@
 const { timingSafeEqual } = require('node:crypto');
 const EVENTS = new Set(['room_joined', 'room_rejected', 'message_sent', 'speech_job_failed',
+  'connection_rejected', 'connection_idle_closed',
   'speech_started', 'speech_rotated', 'speech_replayed', 'speech_retry', 'speech_unavailable', 'speech_limited', 'audio_dropped',
   'avatar_provider_failed', 'ice_issued', 'ice_denied', 'client_ice_renewed', 'client_ice_failed', 'client_media_failed', 'http_failed']);
 
