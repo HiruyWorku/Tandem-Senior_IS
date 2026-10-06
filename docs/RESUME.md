@@ -8,12 +8,13 @@ Owner requested an overnight pause after Google live-caption validation and aske
 - App: `tandem-staging`, e2-small, reserved IP `34.27.182.54`.
 - Relay: existing `turn-server`, e2-micro, reserved IP `34.30.255.171`.
 - Staging URL: https://tandem-34-27-182-54.sslip.io.
-- Both VMs were stopped for the pause; disks, addresses, IAM and secret resources are retained. The staging URL will be unavailable until the app VM starts. Stopped VMs still incur disk and reserved-IP charges.
+- Both VMs were stopped overnight, then restarted on 2026-10-06 at the owner's request. Reserved addresses stayed unchanged. Automatic startup fetched runtime secrets and brought both containers back healthy; public HTTPS and forced TURN delivery passed again. Both VMs are currently running, so normal compute/usage charges have resumed.
 - Local Node preview was terminated; browser tests finished and no local test containers were running.
 - Caption configuration: ENABLE_SPEECH=true, ENABLE_SPEECH_OUTPUT=false, MAX_CAPTION_STREAMS=2. ASL and avatar remain off.
 - Dedicated VM identity has Cloud Speech Client and access only to its own runtime secret. No downloaded key or populated runtime.env is committed.
 - Real Google final-caption delivery and pause passed using a public audio fixture; aggregate caption streams, sockets and rooms returned to zero after the test. All 59 server tests and two relevant caption browser regressions passed. Earlier full browser suite passed 19 journeys before the caption-only flag change.
-- Owner confirmed phone/laptop connection across Wi-Fi and cellular. They have not yet evaluated real-microphone captions or explicitly confirmed all audio/video/text directions.
+- The pushed checkpoint's GitHub Actions run passed: https://github.com/HiruyWorku/Tandem-Senior_IS/actions/runs/37372093743.
+- Owner confirmed phone/laptop connection across Wi-Fi and cellular, then reported that real-microphone captions worked fine using Chrome on Mac for the Deaf role and Safari on phone for the hearing role. This is a successful manual pairing check, not measured latency/accuracy or complete browser coverage.
 - Legacy ASL source and existing local edits were preserved as normal parent-repository files, replacing the broken gitlink. Models, environments and caches are excluded; upstream attribution is in ASL-interpreter/UPSTREAM.md.
 
 ## Restart when work resumes
@@ -23,8 +24,24 @@ gcloud compute instances start turn-server tandem-staging \
   --zone=us-central1-a --project=project-af454814-40f3-4eb7-9f9
 ```
 
-The app's enabled systemd service fetches its Secret Manager runtime configuration and starts Compose. Verify HTTPS health and container readiness, then ask the owner to refresh both devices and test captions from a real microphone. Start captions on the speaking device and pause when done to keep recognition usage low.
+The app's enabled systemd service fetches its Secret Manager runtime configuration and starts Compose. Verify HTTPS health and container readiness with the staging harnesses. Accumulate owner checks in [MANUAL_TEST_CHECKLIST.md](MANUAL_TEST_CHECKLIST.md) for a later batch; the owner requested uninterrupted engineering rather than individual test requests.
 
 Recognition uses V1 latest_long. Published no-data-logging rate after the account free allowance is $0.024 per audio minute; concurrency limits do not cap monthly spending. Existing project data-logging enrollment remains to be checked. See deploy/staging/README.md for deployment details and rollback resources.
 
 Next work: real-user caption accuracy/latency; long-call recognition rotation and TURN renewal; mobile/Safari/Firefox testing; restricted-network TURN/TLS; privacy/billing/abuse controls; owned production domain and user evaluation. Do not claim production readiness from the staging smoke checks.
+
+## Current test preparation
+
+Core smoke checks keep synthetic microphone audio out of paid recognition. Caption smoke checks use only one paid microphone; optional `--rotation` mode checks final-caption delivery after the scheduled 270-second stream replacement. `--recovery` mode interrupts the speaking browser's transport while its context is offline, then checks reconnection, preserved live local tracks, peer video, fresh final captions and draft delivery. Tests report counts/timings only and close the browser on completion/failure.
+
+Both modes passed against the real Google provider on 2026-10-06: rotation at 270001 ms, 57 final results by the post-rotation check, largest final-result gap 5025 ms with a repeating approximately 4.8-second fixture. Recovery passed with a new socket, unchanged live local track IDs, peer video, a new peer final caption, a retained unsent draft and successful typed delivery. Pause was acknowledged locally and by the peer. This is one actual recognition rotation and a controlled browser-offline/transport interruption; it does not prove hour-long TURN renewal, physical Wi-Fi/cellular handoff or arbitrary outage resilience.
+
+Post-test aggregate metrics confirmed one server rotation, zero provider retries/unavailable events, and zero remaining sockets, rooms or caption streams. Both VMs remain running for continued staging work.
+
+## Caption cost controls and dependency patch
+
+Staging now configures a 900-second recognition session deadline and a 15-second incoming-PCM idle cutoff. Provider rotation/retry cannot extend the session deadline; automatic pause destroys the provider stream and replay audio, and requires deliberate Start captions. Video/text continue. Silence still sends PCM and is billable; restarting/reconnecting creates a fresh binding. These are session safeguards, not a monthly spending cap.
+
+Updated proxy-addr from 2.0.7 to 2.0.8 for [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h). The app uses numeric proxy-hop trust rather than the advisory's affected subnet configuration. Docker builds now fail on high/critical production dependency audit findings. All 63 server tests and 20 Chrome browser journeys pass; the rebuilt staging image reports zero dependency vulnerabilities.
+
+Real Google idle cutoff and deliberate restart passed with fresh peer final captions and typed delivery during automatic pause. Aggregate metrics confirmed one limit event, one provider retry during deliberately withheld PCM, no unavailable event, and zero remaining sockets/rooms/recognizers. The redeployed HTTPS/private invitation/text/forced TURN smoke checks also pass. Session expiry uses deterministic and accelerated browser tests to avoid an unnecessary paid 15-minute fixture run. Both VMs remain running.

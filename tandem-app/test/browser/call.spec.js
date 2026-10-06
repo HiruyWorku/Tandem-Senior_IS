@@ -138,7 +138,7 @@ test('optional speech attaches native playback to a confirmed reply without auto
   } finally { await context.close(); await app.close(); }
 });
 
-async function captionApp({ failProvider = false } = {}) {
+async function captionApp({ failProvider = false, maxSessionMs = 0, idleMs = 0 } = {}) {
   const { EventEmitter } = require('node:events');
   const { SpeechToTextService } = require('../../server/speechToText');
   const records = [];
@@ -157,7 +157,7 @@ async function captionApp({ failProvider = false } = {}) {
     };
     records.push(stream); return stream;
   } };
-  const speech = new SpeechToTextService({ client });
+  const speech = new SpeechToTextService({ client, maxSessionMs, idleMs });
   if (failProvider) speech.MAX_FAILURE_MS = 0;
   const app = createApplication({ env: { REQUIRE_ROOM_TOKEN: 'false', ENABLE_SPEECH: 'true' }, speech });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
@@ -213,6 +213,26 @@ test('real AudioWorklet sends binary PCM, mute stops transmission, and unmute ke
       expect(bounds.x, selector).toBeGreaterThanOrEqual(0);
       expect(bounds.x + bounds.width, selector).toBeLessThanOrEqual(391);
     }
+    expect(pages.errors).toEqual([]);
+  } finally { await pages.context.close(); await f.app.close(); }
+});
+
+test('automatic caption limit pauses recognition while video and typed replies remain usable', async ({ browser }) => {
+  const f = await captionApp({ maxSessionMs: 3000 }); const pages = await captionPair(browser, f);
+  try {
+    if (await pages.b.locator('#captionAction').textContent() === 'Start captions') await pages.b.locator('#captionAction').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+    const tracks = await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id));
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions paused', { timeout: 8000 });
+    await expect(pages.b.locator('#captionAction')).toHaveText('Start captions');
+    await expect(pages.a.locator('#peerCaptionStatus')).toHaveText('Peer captions paused');
+    await pages.b.locator('#replyText').fill('Text still works after caption limit');
+    await pages.b.locator('#replySend').click();
+    await expect(pages.a.getByText('Text still works after caption limit', { exact: true })).toBeVisible();
+    await pages.b.locator('#captionAction').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+    expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(tracks);
+    expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live'))).toBe(true);
     expect(pages.errors).toEqual([]);
   } finally { await pages.context.close(); await f.app.close(); }
 });

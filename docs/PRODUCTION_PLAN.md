@@ -153,3 +153,20 @@ The next few days can establish a usable product baseline. Production claims and
 - Validation: 59 server tests and two relevant Chrome caption regressions pass. A real Google streaming test using public sample audio passed through Chrome microphone simulation, AudioWorklet PCM, Socket.IO, Google recognition and peer final-caption delivery; pause was acknowledged on both devices.
 - V1 published no-data-logging recognition rate is $0.024/audio minute after the account-level free allowance (~$1.44/microphone-hour). Two microphones double usage. No new data-logging enrollment was enabled; existing enrollment remains a privacy verification item. Concurrency is not a financial spending cap.
 - Remaining: real-user caption accuracy/latency on phone and laptop, long-call rotation and TURN renewal, supported browsers, provider/project privacy settings, billing controls and the production release gates above.
+
+## Eighth engineering session: rotation and recovery
+
+- Restarted both retained VMs at the owner's request. Reserved addresses stayed unchanged, secret bootstrap and container startup succeeded, and public HTTPS/core calls/forced relay passed again. Yesterday's pushed GitHub Actions checkpoint passed.
+- Owner reported live captions worked fine with Chrome on Mac for the Deaf role and Safari on phone for the hearing role. Quantitative accuracy/latency and broader device coverage are not established by that report.
+- Extended the staging harness to use one paid microphone, check scheduled provider rotation and simulate a brief browser-offline plus signaling-transport interruption. Core relay tests suppress paid recognition in synthetic browsers.
+- Real Google validation passed: recognition replaced at 270001 ms; final captions continued (57 results by the post-rotation check), with largest final gap 5025 ms for a repeating approximately 4.8-second audio fixture and no provider interruption during rotation.
+- Recovery passed: new socket admission, same live local capture tracks, active peer video, fresh peer final captions, preserved unsent draft, successful typed delivery and caption pause acknowledgement.
+- Remaining: hour-long TURN credential renewal, physical network/radio handoff and broader outage matrix; extended recognition rotations and real conversational audio; supported browsers and accessibility; billing/abuse/privacy controls and owned production domain. A controlled interruption and one rotation do not establish lossless captions or production readiness.
+
+## Ninth engineering session: caption limits and deferred owner checks
+
+- Owner requested a cumulative manual testing batch. Pending device, network, caption quality, accessibility and user-evaluation checks are tracked in [MANUAL_TEST_CHECKLIST.md](MANUAL_TEST_CHECKLIST.md); engineering proceeds without requesting each check individually.
+- Added configurable recognition session and incoming-PCM idle limits, with fail-closed configuration validation. Staging uses 900/15 seconds and two concurrent streams. Expiry pauses captions, closes recognition and clears replay audio while video/text continue. Rotation/retry cannot extend the session deadline; deliberate restart/reconnection creates a new binding. These controls do not enforce a monthly budget.
+- Patched proxy-addr to 2.0.8 for [GHSA-jqcg-44mw-7w3h](https://github.com/advisories/GHSA-jqcg-44mw-7w3h); Docker builds now reject high/critical production dependency audit findings. Existing numeric hop trust does not use the advisory's vulnerable subnet form.
+- Validation: all 63 server tests and 20 Chrome browser journeys pass, including automatic pause with live video, typed delivery and deliberate caption restart. Rebuilt staging image reports zero dependency vulnerabilities.
+- Actual Google idle cutoff/restart passed with fresh peer final captions and typed delivery during pause. Redeployed HTTPS/private invitation/text/forced relay checks pass. The 15-minute session deadline is verified with deterministic and accelerated browser tests to avoid unnecessary paid fixture usage.

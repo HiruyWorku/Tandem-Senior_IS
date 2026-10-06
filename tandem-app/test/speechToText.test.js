@@ -245,3 +245,58 @@ test('retry replays pending audio but sample-rate change cannot reinterpret old 
   assert.equal(f.streams[2].writes.length, 1);
   f.service.cleanup('peer');
 });
+
+test('idle cutoff closes recognition, discards replay and requires an explicit fresh binding', () => {
+  const f = fixture({ idleMs: 1000, maxSessionMs: 10000 });
+  f.send();
+  const info = f.service.recognizeStreams.get('peer');
+  const stale = f.timers.get(info.idleTimer).callback;
+  f.setNow(500); f.send();
+  stale();
+  assert.equal(f.streams[0].destroyed, undefined);
+  f.setNow(1500); f.fire(info.idleTimer);
+  assert.equal(f.streams[0].destroyed, true);
+  assert.equal(info.audioHistory.length, 0);
+  assert.equal(f.timers.size, 0);
+  assert.deepEqual(f.emissions.at(-1), ['captionStatus', { status: 'paused', reason: 'idle', retryable: true }]);
+  f.send(); assert.equal(f.streams.length, 1);
+  f.service.cleanup('peer');
+  f.service.bindSocketToStream('peer', f.socket, () => {});
+  f.send(); assert.equal(f.streams.length, 2);
+  f.service.cleanup('peer');
+});
+
+test('session deadline survives rotation and provider retry and blocks further billable streams', () => {
+  const f = fixture({ maxSessionMs: 10000 });
+  f.send();
+  const info = f.service.recognizeStreams.get('peer');
+  const deadline = info.sessionTimer;
+  f.setNow(5000); f.fire(info.restartTimer);
+  assert.equal(info.sessionTimer, deadline);
+  f.streams[1].emit('error', new Error('network'));
+  f.setNow(6000); f.fire(info.retryTimer);
+  assert.equal(info.sessionTimer, deadline);
+  f.setNow(10000); f.send();
+  assert.equal(f.streams[2].destroyed, true);
+  assert.equal(f.streams.length, 3);
+  assert.equal(f.timers.size, 0);
+  assert.equal(f.emissions.at(-1)[1].reason, 'session_limit');
+  f.service.createRecognizeStream('peer');
+  assert.equal(f.streams.length, 3);
+  f.service.cleanup('peer');
+});
+
+test('departure cancels limit timers and stale callbacks cannot stop a replacement participant', () => {
+  const f = fixture({ maxSessionMs: 10000, idleMs: 1000 });
+  f.send();
+  const info = f.service.recognizeStreams.get('peer');
+  const stale = [info.sessionTimer, info.idleTimer].map(id => f.timers.get(id).callback);
+  f.service.cleanup('peer');
+  assert.equal(f.timers.size, 0);
+  f.service.bindSocketToStream('peer', f.socket, () => {});
+  f.send();
+  stale.forEach(callback => callback());
+  assert.equal(f.streams[1].destroyed, undefined);
+  assert.equal(f.service.recognizeStreams.get('peer').unavailable, false);
+  f.service.cleanup('peer');
+});

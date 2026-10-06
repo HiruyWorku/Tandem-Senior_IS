@@ -24,6 +24,7 @@ Configure your platform to redact Authorization headers and request bodies. The 
 | --- | --- |
 | Readiness/liveness unavailable | Check process/container events, resource pressure and startup configuration; restore the process before investigating provider quality. |
 | `speech_unavailable` rises | Check Google identity, API permissions, quota and caption stream capacity. Typed replies remain the fallback. |
+| `speech_limited` rises | Recognition auto-paused on a configured session or incoming-audio idle limit. Video/text continue; a deliberate Start captions action creates a fresh capture binding. |
 | `speech_retry` rises | Check network/provider interruptions. Logs contain numeric status codes, not SDK messages. Automatic retries are bounded. |
 | `audio_dropped` rises | Check congestion, provider backpressure and abusive submission. Do not increase buffers to hide delayed captions. |
 | `client_ice_failed` rises | Check ICE endpoint errors, invitation expiry, TURN reachability and secret alignment. Validate from a separate network. |
@@ -31,6 +32,8 @@ Configure your platform to redact Authorization headers and request bodies. The 
 | Memory or active work rises continuously | Verify departure cleanup and load limits. Capture aggregate diagnostics without recording audio or messages. |
 
 Relay credentials renew before expiry and trigger collision-safe ICE negotiation without replacing local tracks. An expired invitation cannot renew or reconnect. Caption rotation replays only a bounded window of unfinalized audio; long utterances and outages can still lose words. Validate both behaviors using actual providers before claiming seamless long-call support.
+
+Optional CAPTION_MAX_SESSION_SECONDS (0–14400) and CAPTION_IDLE_SECONDS (0–300) default to disabled. Staging configures 900 and 15 respectively. Rotation/provider retries preserve the original time limit; leaving, reconnecting or deliberately restarting captions creates a new binding. Idle means missing incoming PCM, not a silent microphone that still sends audio. Limit expiry closes the provider stream, cancels its timers, clears private replay audio and publishes a paused state; incoming audio cannot reopen it automatically. These limits and concurrency controls do not constitute a daily/monthly spending cap. Invalid configured capacities/durations fail startup rather than falling back to a larger allowance.
 
 ## Deployment acceptance
 

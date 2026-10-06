@@ -35,9 +35,11 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
     transports: ['websocket', 'polling'],
   });
   const { SpeechToTextService } = require('./server/speechToText');
-  const maxStreams = Number(env.MAX_CAPTION_STREAMS || 20);
+  const maxStreams = positiveInteger(env.MAX_CAPTION_STREAMS, 20, 1, 100);
+  const maxSessionMs = positiveInteger(env.CAPTION_MAX_SESSION_SECONDS, 0, 0, 14400) * 1000;
+  const idleMs = positiveInteger(env.CAPTION_IDLE_SECONDS, 0, 0, 300) * 1000;
   speech ||= new SpeechToTextService({ languageCode: env.LANGUAGE_CODE || 'en-US',
-    maxStreams: Number.isInteger(maxStreams) && maxStreams > 0 ? maxStreams : 20, telemetry });
+    maxStreams, maxSessionMs, idleMs, telemetry });
   interpretLetters ||= letters => require('./server/claudeService').interpretLetters(letters);
   synthesize ||= text => require('./server/textToSpeech').synthesize(text);
   const protocol = registerCallProtocol(io, { telemetry, speech, interpretLetters, synthesize, capabilities, authorizeRoom: (data) => !access.required || Boolean(access.verify(data.token, data.room)) });

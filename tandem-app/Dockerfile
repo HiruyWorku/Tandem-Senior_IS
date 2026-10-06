@@ -1,7 +1,8 @@
 FROM node:24-bookworm-slim
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --cache /tmp/npm-cache
+RUN npm ci --omit=dev --cache /tmp/npm-cache \
+  && npm audit --omit=dev --audit-level=high
 COPY server.js ./
 COPY server/ ./server/
 COPY public/ ./public/

@@ -12,6 +12,13 @@ async function main() {
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
   try {
     const context = await browser.newContext();
+    // This check covers core calls/relay; keep synthetic microphones out of paid recognition.
+    // captions-smoke.cjs separately validates the real provider.
+    await context.route('**/capabilities', async route => {
+      const response = await route.fetch();
+      const capabilities = await response.json();
+      await route.fulfill({ response, json: { ...capabilities, captions: false, speechOutput: false } });
+    });
     const landing = await context.newPage();
     await landing.goto(origin);
     await landing.locator('#copyLinkBtn').waitFor({ state: 'visible' });

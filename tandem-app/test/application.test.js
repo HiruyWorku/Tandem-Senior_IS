@@ -59,6 +59,12 @@ test('captions can be enabled while paid speech output stays disabled', async t 
   assert.equal(synthesisCalls, 0);
 });
 
+test('invalid caption capacity and duration configuration fails closed', () => {
+  for (const env of [{ MAX_CAPTION_STREAMS: '0' }, { MAX_CAPTION_STREAMS: 'oops' },
+    { CAPTION_MAX_SESSION_SECONDS: '-1' }, { CAPTION_MAX_SESSION_SECONDS: '1.5' },
+    { CAPTION_IDLE_SECONDS: '301' }]) assert.throws(() => createApplication({ env }));
+});
+
 test('invalid room/role payloads cannot create membership', async t => {
   const f = await fixture(t); const a = await f.client();
   for (const data of [null, {}, { room: ['ABCD'], userType: 'deaf' }, { room: 'abcd', userType: 'deaf' }]) {

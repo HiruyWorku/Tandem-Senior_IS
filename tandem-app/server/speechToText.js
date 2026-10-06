@@ -5,7 +5,11 @@ const VALID_SAMPLE_RATES = new Set([8000, 16000, 22050, 24000, 32000, 44100, 480
 /** Own one lazily started recognizer per connected participant. */
 class SpeechToTextService {
   constructor({ client, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now,
-    languageCode = 'en-US', maxStreams = 20, telemetry = { record() {}, failure() {} } } = {}) {
+    languageCode = 'en-US', maxStreams = 20, maxSessionMs = 0, idleMs = 0,
+    telemetry = { record() {}, failure() {} } } = {}) {
+    if (![maxSessionMs, idleMs].every(value => Number.isInteger(value) && value >= 0 && value <= 2147483647)) {
+      throw new Error('Caption time limits must be non-negative integer milliseconds.');
+    }
     this.telemetry = telemetry;
     this.client = client;
     this.setTimer = setTimer;
@@ -13,6 +17,8 @@ class SpeechToTextService {
     this.now = now;
     this.languageCode = languageCode;
     this.maxStreams = maxStreams;
+    this.maxSessionMs = maxSessionMs;
+    this.idleMs = idleMs;
     this.recognizeStreams = new Map();
     this.STREAM_TIMEOUT = 4.5 * 60 * 1000;
     this.MAX_FAILURE_MS = 5 * 60 * 1000;
@@ -33,6 +39,7 @@ class SpeechToTextService {
       retryDelay: 1000, failureStartedAt: null, unavailable: false,
       droppedAt: null, budget: null,
       streamStartedAt: null, audioMs: 0, finalEndMs: 0, audioHistory: [],
+      firstStreamAt: null, sessionTimer: null, idleTimer: null, idleDeadline: null,
     });
   }
 
@@ -40,6 +47,7 @@ class SpeechToTextService {
   createRecognizeStream(socketId, languageCode, sampleRateHertz) {
     const info = this.recognizeStreams.get(socketId);
     if (!info || !info.socket.connected || info.unavailable) return null;
+    if (this._sessionExpired(socketId, info)) return null;
     if (languageCode) info.languageCode = languageCode;
     if (sampleRateHertz && sampleRateHertz !== info.sampleRateHertz) {
       info.audioHistory = [];
@@ -75,6 +83,7 @@ class SpeechToTextService {
     info.stream = stream;
     this.telemetry.record('speech_started');
     info.streamStartedAt = this.now();
+    this._armLimits(socketId, info);
     this._status(socketId, info, { status: 'starting' });
     info.restartTimer = this.setTimer(() => {
       if (this.recognizeStreams.get(socketId) === info) {
@@ -128,6 +137,51 @@ class SpeechToTextService {
       return { ...entry, buffer: entry.buffer.subarray(samples * 2),
         startMs: entry.startMs + samples / info.sampleRateHertz * 1000 };
     }).filter(entry => entry.buffer.length);
+  }
+
+  _sessionExpired(socketId, info) {
+    if (!this.maxSessionMs || info.firstStreamAt === null || this.now() < info.firstStreamAt + this.maxSessionMs) return false;
+    this._limit(socketId, info, 'session_limit');
+    return true;
+  }
+
+  _armLimits(socketId, info) {
+    if (info.firstStreamAt === null) {
+      info.firstStreamAt = this.now();
+      if (this.maxSessionMs) info.sessionTimer = this.setTimer(() => {
+        if (this.recognizeStreams.get(socketId) === info) this._limit(socketId, info, 'session_limit');
+      }, this.maxSessionMs);
+    }
+    // Stream rotation and provider retries preserve the original session deadline.
+    if (info.idleTimer === null) this._armIdle(socketId, info);
+  }
+
+  _armIdle(socketId, info) {
+    if (!this.idleMs) return;
+    this.clearTimer(info.idleTimer);
+    const deadline = info.idleDeadline = this.now() + this.idleMs;
+    info.idleTimer = this.setTimer(() => {
+      if (this.recognizeStreams.get(socketId) === info && info.idleDeadline === deadline) this._limit(socketId, info, 'idle');
+    }, this.idleMs);
+  }
+
+  _stopLimits(info) {
+    this.clearTimer(info.sessionTimer);
+    this.clearTimer(info.idleTimer);
+    info.sessionTimer = null;
+    info.idleTimer = null;
+    info.idleDeadline = null;
+  }
+
+  _limit(socketId, info, reason) {
+    if (this.recognizeStreams.get(socketId) !== info || info.unavailable) return;
+    info.unavailable = true;
+    this._stopStream(info);
+    this._stopLimits(info);
+    info.audioHistory = [];
+    this.telemetry.record('speech_limited');
+    // A deliberate caption retry creates a new binding; incoming audio cannot reopen it.
+    this._status(socketId, info, { status: 'paused', reason, retryable: true });
   }
 
   _retry(socketId, info, error) {
@@ -189,6 +243,7 @@ class SpeechToTextService {
   processAudio(socketId, data) {
     const info = this.recognizeStreams.get(socketId);
     if (!info || !info.socket.connected || info.retryTimer || info.unavailable) return;
+    if (this._sessionExpired(socketId, info)) return;
     if (!data || !VALID_SAMPLE_RATES.has(data.sampleRate)) return;
 
     let audioBuffer;
@@ -233,6 +288,7 @@ class SpeechToTextService {
       info.audioHistory.push(entry);
       while (info.audioHistory.length > 1024 || info.audioHistory[0]?.endMs <= info.audioMs - 5000) info.audioHistory.shift();
       info.stream.write(audioBuffer);
+      this._armIdle(socketId, info);
     } catch (error) {
       this._retry(socketId, info, error);
     }
@@ -244,6 +300,7 @@ class SpeechToTextService {
     if (!info) return;
     this.recognizeStreams.delete(socketId);
     this._stopStream(info);
+    this._stopLimits(info);
   }
 }
 
