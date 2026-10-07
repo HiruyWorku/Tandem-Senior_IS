@@ -51,6 +51,25 @@ Staging sets MAX_CONNECTIONS=20 and UNJOINED_TIMEOUT_SECONDS=30. Namespace admis
 
 This admission check and the core HTTPS/private invitation/text/forced TURN smoke check passed on 2026-10-06. All 70 server tests and 22 Chrome browser journeys pass, including desktop/mobile draft recovery from controlled namespace rejection. A fresh dependency audit reports zero vulnerabilities.
 
+## Application releases
+
+Use `python3 tandem-app/deploy/staging/package-source.py /private/tmp/tandem-staging-source.tar.gz` from the repository root to prepare source. The packager excludes local `.env`, runtime secrets, release locks, prior Compose snapshots, caches and model artifacts. Upload the archive, verify its checksum and extract it under `/opt/tandem`; preserve the VM's existing `.env` and `runtime.env`. Installing source does not change the running container.
+
+On idle staging, run:
+
+```sh
+sudo python3 /opt/tandem/tandem-app/deploy/staging/release.py \
+  --image tandem-staging-app:release-<unique-identifier>
+```
+
+The release command holds a local lock and refuses reused tags. It checks authenticated aggregate metrics for connected clients before building and again before activation; if clients are connected or metrics cannot be checked, it postpones the release. It builds a uniquely tagged candidate, performs a fresh production dependency audit outside Docker's cached build layers, and validates startup with Compose's actual configuration without opening a listener or calling paid providers. Only then does it atomically pin APP_IMAGE in the owner-only `.env`, restart the service, verify the selected image, and check readiness.
+
+If activation fails, it pins the exact previous image under a unique rollback tag, restarts and verifies readiness again. Failed rollback is reported explicitly with the retained recovery image. Audit/configuration failure leaves running settings untouched. Automated failure-path tests cover these cases; they simulate command failures rather than intentionally breaking a live Google VM.
+
+This is an application-image release, not a rollback of Compose/source/IAM/secret changes. Review and separately preserve configuration changes. Runtime secrets continue to refresh through the VM identity. The single-instance restart has a brief interruption; idle checks are best-effort, not atomic draining or zero-downtime deployment. Retained image tags consume disk space: review them before pruning, and keep a verified recovery image. Use `install.sh` for initial installation, not routine updates.
+
+The successful release path passed on staging on 2026-10-07, using `tandem-staging-app:release-20261007-deployment-check`. Audit, startup configuration, selected-image verification and readiness passed, followed by HTTPS/private invitation/text/forced TURN checks. The retained prior image is `tandem-staging-app:rollback-18e3f87612eb4ac9ac815201d4ad7c86`. All 71 server tests pass, including six simulated release failure/recovery scenarios.
+
 ## Approval scope and cost
 
 Owner approved the app VM/disk/IP, scoped identity/IAM, Secret Manager API/secret, app-only network/firewalls and initial deployment. They separately approved migrating the existing TURN server to shared-secret authentication to avoid an additional relay VM. Neither approval authorizes deleting the existing relay.

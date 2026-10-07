@@ -57,3 +57,15 @@ Pre-admission rollback resources: `tandem-staging-app:before-admission-limits` a
 The public staging admission harness passed: 20 clients connected, an extra client was rejected, unjoined clients closed, two admitted callers remained connected and exchanged text, and replacement admission succeeded. No microphone audio was sent. HTTPS/private invitation/text/forced TURN smoke checks also passed after rollout.
 
 Aggregate metrics confirmed one rejected connection, 18 idle closures, zero started recognition streams, and zero remaining sockets/rooms/caption streams after the checks.
+
+## 2026-10-07: application release tooling
+
+Owner deferred device testing until tonight and requested continued development. Pending checks remain in the cumulative checklist; no additional owner test was required for this operational change.
+
+Added `package-source.py` and a locked `release.py` command. Source archives exclude local runtime settings/secrets and retained release files. Releases use unique image tags, fresh dependency auditing, startup validation with actual Compose configuration and aggregate idle checks. APP_IMAGE is atomically pinned in the owner-only `.env`; failed activation restores and verifies the prior image. Configuration/IAM/secret rollback is outside this command's scope, and single-instance restarts still interrupt service briefly.
+
+All 71 server tests pass, including six Python release scenarios using simulated command failures. Prior checkpoint GitHub CI passed: https://github.com/HiruyWorku/Tandem-Senior_IS/actions/runs/37491039909.
+
+Actual staging release succeeded: `tandem-staging-app:release-20261007-deployment-check`; preserved rollback image `tandem-staging-app:rollback-18e3f87612eb4ac9ac815201d4ad7c86`. Candidate audit/startup validation, selected-image verification and readiness passed. Both existing VMs remain running; no new infrastructure was added.
+
+Post-release HTTPS/private invitation/typed reply/forced TURN delivery smoke checks passed. The source archive was checked to exclude runtime `.env`, `runtime.env`, Python caches and bytecode. Evening owner checklist is unchanged.

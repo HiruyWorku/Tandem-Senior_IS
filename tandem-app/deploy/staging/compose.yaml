@@ -1,6 +1,7 @@
 name: tandem-staging
 services:
   app:
+    image: ${APP_IMAGE:-tandem-staging-app:latest}
     build:
       context: ../..
       dockerfile: Dockerfile
