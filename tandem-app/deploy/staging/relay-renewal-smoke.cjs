@@ -1,11 +1,19 @@
 const assert = require('node:assert/strict');
 const { setTimeout: delay } = require('node:timers/promises');
 const { chromium } = require('@playwright/test');
+const fs = require('node:fs');
 
 // Uses actual deployed expiry and relay allocations. Never print invitations or ICE credentials.
 async function main() {
   const origin = new URL(process.argv[2]).origin;
   assert.equal(new URL(origin).protocol, 'https:');
+  const reportPath = process.argv[3];
+  if (reportPath) fs.writeFileSync(reportPath, '', { flag: 'wx', mode: 0o600 });
+  const report = value => {
+    const line = JSON.stringify(value);
+    console.log(line);
+    if (reportPath) fs.appendFileSync(reportPath, `${line}\n`);
+  };
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
   try {
@@ -50,6 +58,10 @@ async function main() {
     for (const page of pages) {
       await page.waitForFunction(() => document.querySelector('#replyStatus').textContent === 'Ready to send.');
       await page.waitForFunction(() => window.relayPeers.at(-1)?.connectionState === 'connected');
+      // Admission can now precede camera permission. Wait for negotiated media too.
+      await page.waitForFunction(() => document.querySelector('#localVideo').srcObject?.getTracks().length &&
+        document.querySelector('#localVideo').srcObject.getTracks().every(track => track.readyState === 'live'));
+      await page.waitForFunction(() => document.querySelector('#remoteVideo').readyState >= 2);
       await page.evaluate(async () => {
         const peer = window.relayPeers.at(-1);
         for (const sender of peer.getSenders()) {
@@ -89,14 +101,14 @@ async function main() {
     let previous = await Promise.all(pages.map(read));
     const peerCounts = previous.map(sample => sample.peerCount);
     let stalled = 0; let samples = 0;
-    console.log(JSON.stringify({ event: 'started', secondsUntilExpiry: Math.ceil((originalExpiry - started) / 1000),
-      captions: false, maxVideoBitratePerPeer: 24000 }));
+    report({ event: 'started', secondsUntilExpiry: Math.ceil((originalExpiry - started) / 1000),
+      captions: false, maxVideoBitratePerPeer: 24000 });
     while (Date.now() < finishAt) {
       await delay(Math.min(30000, finishAt - Date.now()));
       const current = await Promise.all(pages.map(read));
-      console.log(JSON.stringify({ event: 'connections', elapsedSeconds: Math.round((Date.now() - started) / 1000),
+      report({ event: 'connections', elapsedSeconds: Math.round((Date.now() - started) / 1000),
         states: current.map(sample => sample.state), sockets: current.map(sample => sample.socketConnected),
-        peerCounts: current.map(sample => sample.peerCount), events: current.map(sample => sample.events) }));
+        peerCounts: current.map(sample => sample.peerCount), events: current.map(sample => sample.events) });
       for (const [index, sample] of current.entries()) {
         assert.equal(sample.peerCount, peerCounts[index], 'Peer connection was replaced during the continuous relay check');
         assert.equal(sample.state, 'connected', 'Relay call disconnected');
@@ -111,16 +123,20 @@ async function main() {
       await pages[sender].locator('#replyText').fill(message); await pages[sender].locator('#replySend').click();
       await pages[receiver].getByText(message, { exact: true }).waitFor();
       assert.equal(errors.length, 0, 'Browser runtime error');
-      console.log(JSON.stringify({ event: 'sample', elapsedSeconds: Math.round((Date.now() - started) / 1000),
+      report({ event: 'sample', elapsedSeconds: Math.round((Date.now() - started) / 1000),
         renewals: expiries.map(values => values.length - 1), videoAdvancing: moving,
-        receivedBytes: current.map(sample => sample.bytes) }));
+        receivedBytes: current.map(sample => sample.bytes) });
       previous = current;
     }
     assert.ok(expiries.every(values => values.length >= 2 && values.at(-1) > originalExpiry), 'Credentials did not extend');
     assert.equal(stalled, 0, 'Video did not advance after original credential expiry');
-    console.log(JSON.stringify({ event: 'passed', elapsedSeconds: Math.round((Date.now() - started) / 1000),
+    report({ event: 'passed', elapsedSeconds: Math.round((Date.now() - started) / 1000),
       secondsPastOriginalExpiry: Math.round((Date.now() - originalExpiry) / 1000),
-      renewals: expiries.map(values => values.length - 1), textChecks: samples }));
+      renewals: expiries.map(values => values.length - 1), textChecks: samples });
   } finally { await browser.close(); }
 }
-main().catch(error => { console.error(error.message); process.exitCode = 1; });
+main().catch(error => {
+  // Playwright navigation call logs can contain the private invitation fragment.
+  console.error(error.message.split('\n')[0].replace(/https?:\/\/\S+/g, '[staging URL]'));
+  process.exitCode = 1;
+});

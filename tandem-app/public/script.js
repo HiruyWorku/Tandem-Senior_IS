@@ -365,8 +365,12 @@ async function setCaptionEnabled(enabled) {
   updateCaptionState();
   if (enabled) {
     if (!capture?.node) await setupAudioProcessing(localStream);
+    if (request !== captionRequest || !joinedRoom) return;
     if (!capture?.node) { captionBusy = false; updateCaptionState(); return; }
-    try { await capture?.resume(); } catch { captureState = 'failed'; captionBusy = false; updateCaptionState(); return; }
+    try { await capture?.resume(); } catch {
+      if (request !== captionRequest || !joinedRoom) return;
+      captureState = 'failed'; captionBusy = false; updateCaptionState(); return;
+    }
   }
   if (request !== captionRequest || !joinedRoom) return;
   return new Promise(resolve => socket.timeout(5000).emit('caption:state', { enabled }, (error, result) => {

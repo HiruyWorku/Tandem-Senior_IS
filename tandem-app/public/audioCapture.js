@@ -1,6 +1,6 @@
 /** Capture PCM without owning or stopping the call's MediaStream tracks. */
 export class AudioCapture {
-  constructor({ onAudio, onState }) {
+  constructor({ onAudio, onState, setupTimeoutMs = 10000, resumeTimeoutMs = 5000, closeTimeoutMs = 1000 }) {
     this.onAudio = onAudio;
     this.onState = onState;
     this.enabled = false;
@@ -9,11 +9,25 @@ export class AudioCapture {
     this.source = null;
     this.stream = null;
     this.generation = 0;
+    Object.assign(this, { setupTimeoutMs, resumeTimeoutMs, closeTimeoutMs });
+  }
+
+  async deadline(operation, milliseconds) {
+    let timer;
+    try {
+      return await Promise.race([operation, new Promise((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error('Browser audio operation timed out'); error.code = 'timeout'; reject(error);
+        }, milliseconds);
+      })]);
+    } finally { clearTimeout(timer); }
   }
 
   async start(stream) {
-    await this.close();
+    const closing = this.close();
     const generation = this.generation;
+    await closing;
+    if (generation !== this.generation) return;
     const Context = window.AudioContext || window.webkitAudioContext;
     if (!Context || !window.AudioWorkletNode) {
       const error = new Error('AudioWorklet unavailable');
@@ -27,9 +41,9 @@ export class AudioCapture {
       if (this.context === context) this.onState(context.state);
     };
     try {
-      await context.audioWorklet.addModule('/pcm-worklet.js');
-      if (generation !== this.generation) {
-        if (context.state !== 'closed') await context.close();
+      await this.deadline(context.audioWorklet.addModule('/pcm-worklet.js'), this.setupTimeoutMs);
+      if (generation !== this.generation || this.context !== context) {
+        if (context.state !== 'closed') await this.deadline(context.close(), this.closeTimeoutMs).catch(() => {});
         return;
       }
       this.source = context.createMediaStreamSource(stream);
@@ -48,7 +62,9 @@ export class AudioCapture {
       this.source.connect(this.node);
       this.node.connect(context.destination);
       // A browser may wait for a user gesture. Never block room admission on it.
-      context.resume().catch(() => this.onState('suspended'));
+      this.deadline(context.resume(), this.resumeTimeoutMs).catch(() => {
+        if (this.context === context) this.onState(context.state);
+      });
       this.onState(context.state);
     } catch (error) {
       if (this.context !== context || generation !== this.generation) return;
@@ -67,8 +83,13 @@ export class AudioCapture {
 
   async resume() {
     if (!this.context || !this.node) throw new Error('Capture is unavailable');
-    await this.context.resume();
-    this.onState(this.context.state);
+    const context = this.context; const generation = this.generation;
+    try { await this.deadline(context.resume(), this.resumeTimeoutMs); }
+    catch (error) {
+      if (this.context !== context || this.generation !== generation) return;
+      throw error;
+    }
+    if (this.context === context && this.generation === generation) this.onState(context.state);
   }
 
   async close() {
@@ -88,7 +109,9 @@ export class AudioCapture {
     this.stream = null;
     if (context) {
       context.onstatechange = null;
-      if (context.state !== 'closed') await context.close();
+      // Disconnecting the graph and closing its port already stops PCM delivery.
+      // A broken audio backend must not keep page cleanup or a new retry waiting forever.
+      if (context.state !== 'closed') await this.deadline(context.close(), this.closeTimeoutMs).catch(() => {});
     }
   }
 }
