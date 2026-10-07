@@ -7,6 +7,7 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: tandem-app
@@ -20,6 +21,15 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npx playwright install --with-deps chromium firefox webkit
+        timeout-minutes: 10
+      - name: Start virtual audio output for Firefox
+        timeout-minutes: 3
+        run: |
+          sudo apt-get install --no-install-recommends -y pulseaudio
+          pulseaudio --start --exit-idle-time=-1
+          pactl load-module module-null-sink sink_name=tandem_test rate=48000
+          pactl set-default-sink tandem_test
+          pactl info
       - run: npm run test:browser
       - run: npm run test:browser:compat
       - run: npm audit --omit=dev --audit-level=high
