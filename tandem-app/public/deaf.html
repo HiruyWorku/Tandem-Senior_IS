@@ -77,6 +77,11 @@
     <!-- Sidebar: avatar + captions -->
     <aside class="call-sidebar">
 
+      <section id="mediaRecovery" class="sidebar-panel media-recovery" aria-label="Camera and microphone" hidden>
+        <p id="mediaStatus" role="status"></p>
+        <button id="retryMedia" class="caption-action" type="button">Retry camera &amp; microphone</button>
+      </section>
+
       <!-- Avatar section -->
       <div class="sidebar-panel" id="avatarSection" style="flex:0 1 180px; min-height:0;" hidden>
         <div class="sidebar-panel-head">
@@ -176,17 +181,6 @@
     if (tagCode) tagCode.textContent = room;
     if (ctrl) ctrl.textContent = room;
     if (tag) tag.style.display = 'flex';
-  }
-
-  // Hide waiting overlay once video plays
-  const vid = document.getElementById('aslVideo');
-  const waiting = document.getElementById('stageWaiting');
-  if (vid && waiting) {
-    vid.addEventListener('playing', () => {
-      waiting.style.opacity = '0';
-      waiting.style.transition = 'opacity 0.4s';
-      setTimeout(() => { waiting.style.display = 'none'; }, 400);
-    }, { once: true });
   }
 
   // Remote captions live class

@@ -191,7 +191,7 @@ const MIN_SAME_LETTER_INTERVAL = 900; // ms — don't re-emit same letter too fa
     if (!await window.TandemApp.authorizeInvitation(roomCode)) return;
 
     window.TandemApp.setStatus('Requesting camera and microphone…');
-    await window.TandemApp.initMedia();
+    const mediaReady = window.TandemApp.initMedia();
 
     window.TandemApp.setStatus('Loading ICE configuration…');
     await window.TandemApp.loadIceServers();
@@ -201,7 +201,6 @@ const MIN_SAME_LETTER_INTERVAL = 900; // ms — don't re-emit same letter too fa
 
     window.TandemApp.setStatus('Connecting to signaling server…');
     window.TandemApp.initSocket('deaf', roomCode);
-    window.TandemApp.setStatus('Waiting for peer…');
 
     // TTS spoken feedback
     const attachTtsToast = () => {
@@ -215,6 +214,7 @@ const MIN_SAME_LETTER_INTERVAL = 900; // ms — don't re-emit same letter too fa
       const t = setInterval(() => { if (window.socket) { clearInterval(t); attachTtsToast(); } }, 100);
     }
 
+    await mediaReady;
     const stream = document.getElementById('localVideo')?.srcObject;
     const signingVideo = document.getElementById('aslVideo');
     if (stream && signingVideo) {

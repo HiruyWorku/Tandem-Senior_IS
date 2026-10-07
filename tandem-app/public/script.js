@@ -9,6 +9,7 @@ const localVideo = document.getElementById('localVideo');
 const remoteVideo = document.getElementById('remoteVideo');
 const toggleMicBtn = document.getElementById('toggleMic');
 const toggleCameraBtn = document.getElementById('toggleCamera');
+const signingVideo = document.getElementById('aslVideo');
 
 let capture;
 let joinedRoom = false;
@@ -98,6 +99,10 @@ async function loadIceServers() {
 let pc;
 let socket;
 let localStream;
+let mediaPending = false;
+let mediaAccessAllowed = false;
+let mediaControlsBound = false;
+let speakerControlBound = false;
 let makingOffer = false;
 let polite = false;
 let peerPresent = false;
@@ -133,12 +138,13 @@ async function authorizeInvitation(room) {
     if (!response.ok) throw new Error('Connection unavailable. Reload to try again.');
     const capabilities = await response.json();
     window.TandemApp.capabilities = capabilities;
-    if (!capabilities.privateRooms && !invitationToken) return true;
+    if (!capabilities.privateRooms && !invitationToken) { mediaAccessAllowed = true; return true; }
     const result = await fetch('/api/rooms/validate', {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...invitationHeaders() },
       body: JSON.stringify({ room }), signal: AbortSignal.timeout(10000),
     });
     if (!result.ok) throw new Error('Invitation invalid or expired. Ask your partner for the full invitation link.');
+    mediaAccessAllowed = true;
     return true;
   } catch (error) {
     const message = error.message || 'Invitation unavailable. Reload to try again.';
@@ -158,16 +164,73 @@ async function authorizeInvitation(room) {
   }
 }
 
-async function initMedia() {
-  try {
-    const response = await fetch('/capabilities');
-    window.TandemApp.capabilities = await response.json();
-  } catch {
-    window.TandemApp.capabilities = {};
+function showMediaRecovery(message) {
+  const panel = document.getElementById('mediaRecovery');
+  const label = document.getElementById('mediaStatus');
+  if (panel) panel.hidden = false;
+  if (label) label.textContent = message;
+  const button = document.getElementById('retryMedia');
+  if (button) { button.disabled = mediaPending || !mediaAccessAllowed; button.textContent = mediaPending ? 'Waiting for permission…' : 'Retry camera & microphone'; }
+  updateStageWaiting();
+}
+
+function updateStageWaiting() {
+  const waiting = document.getElementById('stageWaiting');
+  if (!waiting || !mediaAccessAllowed) return;
+  const video = signingVideo || remoteVideo;
+  const available = video?.srcObject?.getVideoTracks().some(track => track.readyState === 'live') &&
+    video.readyState >= 2 && (signingVideo ? isCameraOn : peerPresent && pc?.connectionState === 'connected');
+  waiting.style.display = available ? 'none' : '';
+  waiting.style.opacity = '1';
+  const label = waiting.querySelector('p');
+  const spinner = waiting.querySelector('.spinner');
+  if (signingVideo) {
+    if (label) label.textContent = !isCameraOn ? 'Your camera is off.' : mediaPending ? 'Waiting for camera permission…' : 'Your camera is unavailable. You can still type replies.';
+    if (spinner) spinner.hidden = !mediaPending;
+  } else {
+    const connected = pc?.connectionState === 'connected';
+    if (label) label.textContent = !peerPresent ? 'Waiting for your peer…' : connected ? 'Peer video is unavailable. You can still type replies.' : 'Connecting to your peer’s video…';
+    if (spinner) spinner.hidden = peerPresent && connected;
   }
+}
+for (const video of [signingVideo, remoteVideo]) {
+  video?.addEventListener('playing', updateStageWaiting);
+  video?.addEventListener('emptied', updateStageWaiting);
+}
+
+function updateMediaControls() {
+  const audio = localStream?.getAudioTracks().some(track => track.readyState === 'live');
+  const video = localStream?.getVideoTracks().some(track => track.readyState === 'live');
+  if (toggleMicBtn) { toggleMicBtn.disabled = !audio; toggleMicBtn.setAttribute('aria-pressed', String(isMicOn && Boolean(audio))); }
+  if (toggleCameraBtn) { toggleCameraBtn.disabled = !video; toggleCameraBtn.setAttribute('aria-pressed', String(isCameraOn && Boolean(video))); }
+}
+
+async function attachCallMedia(stream) {
+  const connection = pc;
+  if (!connection || connection.signalingState === 'closed') return;
   try {
-    console.log('[client] requesting getUserMedia');
-    localStream = await navigator.mediaDevices.getUserMedia({
+    for (const track of stream.getTracks()) {
+      const sender = connection.getSenders().find(sender => sender.track?.kind === track.kind);
+      if (sender) await sender.replaceTrack(track);
+      else connection.addTrack(track, stream);
+    }
+  } catch {
+    // A device can exceed the negotiated encoding envelope. Rebuild using the new tracks.
+    if (pc === connection && !pageClosing) {
+      connection.close(); await createPeerConnection();
+      if (joinedRoom && peerPresent) await makeOffer();
+    }
+  }
+}
+
+async function initMedia() {
+  if (mediaPending || pageClosing || !mediaAccessAllowed) return false;
+  mediaPending = true;
+  setupMediaControls();
+  showMediaRecovery('Allow camera and microphone access in your browser. Typed replies remain available.');
+  let nextStream;
+  try {
+    nextStream = await navigator.mediaDevices.getUserMedia({
       video: true,
       audio: {
         echoCancellation: true,
@@ -176,32 +239,57 @@ async function initMedia() {
       }
     });
 
-    console.log('[client] got localStream', {
-      audio: localStream.getAudioTracks().map((t) => ({ id: t.id, enabled: t.enabled })),
-      video: localStream.getVideoTracks().map((t) => ({ id: t.id, enabled: t.enabled }))
-    });
-
-    if (localVideo) {
-      localVideo.srcObject = localStream;
+    if (pageClosing || !mediaAccessAllowed) { nextStream.getTracks().forEach(track => track.stop()); return false; }
+    const previous = localStream;
+    if (joinedRoom && window.TandemApp.capabilities.captions) await setCaptionEnabled(false);
+    await cleanupAudioProcessing();
+    if (pageClosing || !mediaAccessAllowed) { nextStream.getTracks().forEach(track => track.stop()); return false; }
+    localStream = nextStream;
+    localStream.getAudioTracks().forEach(track => { track.enabled = isMicOn; });
+    localStream.getVideoTracks().forEach(track => { track.enabled = isCameraOn; });
+    if (localVideo) localVideo.srcObject = localStream;
+    if (signingVideo) { signingVideo.srcObject = localStream; signingVideo.play().catch(() => {}); }
+    await attachCallMedia(localStream);
+    previous?.getTracks().forEach(track => track.stop());
+    if (pageClosing || !mediaAccessAllowed) { nextStream.getTracks().forEach(track => track.stop()); return false; }
+    for (const track of localStream.getTracks()) track.onended = () => {
+      if (localStream !== nextStream || pageClosing || !mediaAccessAllowed) return;
+      if (track.kind === 'audio') { captureState = 'unavailable'; setCaptionEnabled(false); }
+      updateMediaControls();
+      showMediaRecovery('Your camera or microphone stopped. Check your devices, then retry. Typed replies remain available.');
+    };
+    if (window.TandemApp.capabilities.captions) {
+      await setupAudioProcessing(localStream);
+      if (joinedRoom && isMicOn && !captionPaused && captureState === 'running') await setCaptionEnabled(true);
     }
-
-    if (window.TandemApp.capabilities.captions) await setupAudioProcessing(localStream);
-    setupMediaControls();
+    document.getElementById('mediaRecovery')?.setAttribute('hidden', '');
+    return true;
   } catch (error) {
-    console.error('Error initializing media:', error);
-    setStatus('Camera or microphone unavailable. You can still type replies.');
-    const waiting = document.getElementById('stageWaiting');
-    if (waiting) {
-      const label = waiting.querySelector('p');
-      if (label) label.textContent = 'Camera or microphone unavailable. You can still type replies.';
-      const spinner = waiting.querySelector('.spinner');
-      if (spinner) spinner.hidden = true;
-    }
-    if (toggleMicBtn) toggleMicBtn.disabled = true;
-    if (toggleCameraBtn) toggleCameraBtn.disabled = true;
-    setupSpeakerControl();
+    if (nextStream && localStream !== nextStream) nextStream.getTracks().forEach(track => track.stop());
+    const reasons = {
+      NotAllowedError: 'Camera or microphone access is blocked. Allow access in your browser settings, then retry.',
+      NotFoundError: 'No camera or microphone was found. Connect a device, then retry.',
+      NotReadableError: 'Your camera or microphone is busy. Close other apps using it, then retry.',
+    };
+    showMediaRecovery(`${reasons[error.name] || 'Camera or microphone unavailable. Check your devices and retry.'} You can still type replies.`);
     return false;
+  } finally {
+    mediaPending = false;
+    updateMediaControls();
+    const button = document.getElementById('retryMedia');
+    if (button) { button.disabled = !mediaAccessAllowed; button.textContent = 'Retry camera & microphone'; }
+    updateStageWaiting();
   }
+}
+
+document.getElementById('retryMedia')?.addEventListener('click', () => { initMedia(); });
+
+function revokeMediaAccess() {
+  mediaAccessAllowed = false;
+  localStream?.getTracks().forEach(track => track.stop());
+  cleanupAudioProcessing();
+  updateMediaControls();
+  document.getElementById('mediaRecovery')?.setAttribute('hidden', '');
 }
 
 function updateCaptionState() {
@@ -281,8 +369,8 @@ async function setCaptionEnabled(enabled) {
     try { await capture?.resume(); } catch { captureState = 'failed'; captionBusy = false; updateCaptionState(); return; }
   }
   if (request !== captionRequest || !joinedRoom) return;
-  socket.timeout(5000).emit('caption:state', { enabled }, (error, result) => {
-    if (request !== captionRequest || !joinedRoom) return;
+  return new Promise(resolve => socket.timeout(5000).emit('caption:state', { enabled }, (error, result) => {
+    if (request !== captionRequest || !joinedRoom) { resolve(); return; }
     captionBusy = false;
     if (error || !result?.ok) {
       providerState = 'unavailable'; providerRetryable = true;
@@ -292,7 +380,8 @@ async function setCaptionEnabled(enabled) {
     syncCapture();
     // An interruption during acknowledgement must still release the recognizer.
     if (enabled && captureState !== 'running') setCaptionEnabled(false);
-  });
+    resolve();
+  }));
 }
 
 document.getElementById('captionAction')?.addEventListener('click', () => {
@@ -379,6 +468,7 @@ async function createPeerConnection() {
     const labels = { new: 'Waiting for your peer…', connecting: 'Connecting to your peer…', connected: 'Connected to your peer',
       disconnected: 'Connection interrupted. Reconnecting…', failed: 'Video connection failed. Typed replies may still work.', closed: 'Video connection closed.' };
     setStatus(labels[pc.connectionState] || 'Waiting for your peer…', pc.connectionState === 'connected' ? 'connected' : pc.connectionState === 'failed' ? 'error' : 'waiting');
+    updateStageWaiting();
     clearTimeout(recoveryTimer);
     if (['disconnected', 'failed'].includes(connection.connectionState) && joinedRoom && peerPresent) {
       recoveryTimer = setTimeout(async () => {
@@ -429,6 +519,7 @@ function initSocket(userType, roomCode) {
   socket.on('disconnect', reason => {
     clearTimeout(recoveryTimer); clearTimeout(connectionRetryTimer);
     peerPresent = false; joinedRoom = false; captionRequest++; captionBusy = false; syncCapture();
+    updateStageWaiting();
     if (!pageClosing) {
       setStatus('Connection interrupted. Reconnecting…');
       if (reason === 'io server disconnect') retryConnection();
@@ -438,6 +529,7 @@ function initSocket(userType, roomCode) {
     clearTimeout(connectionRetryTimer);
     if (pageClosing) return;
     if (error.data?.code === 'invalid_invitation') {
+      revokeMediaAccess();
       setStatus('Invitation invalid or expired. Ask your partner for a new link.', 'error');
       joinedRoom = false; syncCapture();
       pc?.close();
@@ -452,6 +544,7 @@ function initSocket(userType, roomCode) {
   });
   socket.on('protocolError', ({ code }) => {
     if (code === 'invalid_invitation') {
+      revokeMediaAccess();
       setStatus('Invitation invalid or expired. Ask your partner for a new link.', 'error');
       joinedRoom = false; syncCapture();
       const reply = document.getElementById('replyStatus');
@@ -504,6 +597,7 @@ function initSocket(userType, roomCode) {
   socket.on('joined', ({ room, peers }) => {
     joinedRoom = true;
     peerPresent = peers === 2;
+    updateStageWaiting();
     if (!localStream) socket.emit('client:health', { event: 'media_failed' });
     providerState = window.TandemApp.capabilities?.captions ? 'ready' : 'disabled';
     if (!isMicOn || captionPaused || captureState !== 'running') setCaptionEnabled(false);
@@ -520,6 +614,7 @@ function initSocket(userType, roomCode) {
   socket.on('ready', (data) => {
     polite = Boolean(data?.polite);
     peerPresent = true;
+    updateStageWaiting();
     setStatus('Both peers present. Ready to negotiate.');
     console.log('[client] ready');
   });
@@ -591,6 +686,7 @@ function initSocket(userType, roomCode) {
     setStatus('Your peer left. Waiting for someone to join…');
     pc?.close();
     if (remoteVideo) remoteVideo.srcObject = null;
+    updateStageWaiting();
     peerReset = createPeerConnection();
     console.warn('[client] peer_disconnected');
   });
@@ -625,6 +721,7 @@ function toggleMic() {
     syncCapture();
 
     toggleMicBtn.classList.toggle('active-off', !isMicOn);
+    updateMediaControls();
 
     console.log(`[client] Microphone ${isMicOn ? 'unmuted' : 'muted'}`);
   }
@@ -639,22 +736,28 @@ function toggleCamera() {
     videoTracks[0].enabled = isCameraOn;
 
     toggleCameraBtn.classList.toggle('active-off', !isCameraOn);
+    updateMediaControls();
     if (localVideo) localVideo.style.opacity = isCameraOn ? '1' : '0.5';
+    updateStageWaiting();
 
     console.log(`[client] Camera turned ${isCameraOn ? 'on' : 'off'}`);
   }
 }
 
 function setupMediaControls() {
-  if (!toggleMicBtn || !toggleCameraBtn) return;
-  toggleMicBtn.addEventListener('click', toggleMic);
-  toggleCameraBtn.addEventListener('click', toggleCamera);
+  if (!mediaControlsBound) {
+    toggleMicBtn?.addEventListener('click', toggleMic);
+    toggleCameraBtn?.addEventListener('click', toggleCamera);
+    mediaControlsBound = true;
+  }
   setupSpeakerControl();
+  updateMediaControls();
 }
 
 function setupSpeakerControl() {
   const button = document.getElementById('toggleSpeaker');
-  if (!button || !remoteVideo) return;
+  if (!button || !remoteVideo || speakerControlBound) return;
+  speakerControlBound = true;
   button.addEventListener('click', async () => {
     remoteVideo.muted = !remoteVideo.muted;
     button.textContent = remoteVideo.muted ? 'Peer audio off' : 'Peer audio on';

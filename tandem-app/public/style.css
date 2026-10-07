@@ -1159,6 +1159,17 @@ pose-viewer {
 .caption-tools .caption-provider-status { margin: 0; }
 .caption-action { padding: 6px 10px; min-height: 44px; border: 1px solid var(--border-3); border-radius: var(--r-sm); background: var(--surface); color: var(--text); font: inherit; cursor: pointer; flex-shrink: 0; }
 .caption-action[hidden] { display: none; }
+.media-recovery { padding: 16px; gap: 12px; flex-shrink: 0; }
+.media-recovery[hidden] { display: none; }
+.media-recovery p { margin: 0; color: var(--text); font-size: 1rem; line-height: 1.5; overflow-wrap: anywhere; }
+.media-recovery .caption-action { white-space: normal; }
+.stage-waiting p { max-width: 32ch; text-align: center; }
+@media (max-width: 860px) {
+  .stage-waiting p { max-width: 18ch; }
+  .stage-waiting { padding-inline-end: 132px; padding-inline-start: 16px; }
+}
+.ctrl-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.caption-action:disabled { opacity: 0.55; cursor: wait; }
 .caption-action:hover { background: var(--surface-2); }
 .caption-action:focus-visible { outline: 2px solid var(--amber); outline-offset: 3px; }
 .peer-caption-status { color: var(--text-2); font-size: 14px; margin-block: 4px 8px; overflow-wrap: anywhere; }

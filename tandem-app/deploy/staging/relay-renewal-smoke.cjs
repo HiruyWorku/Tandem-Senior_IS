@@ -17,9 +17,18 @@ async function main() {
     await context.route(/https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com)\//, route => route.abort());
     await context.addInitScript(() => {
       window.relayPeers = [];
+      window.relayEvents = [];
+      window.addEventListener('tandem:socket', event => {
+        event.detail.on('connect', () => window.relayEvents.push({ event: 'socket_connected', at: Math.round(performance.now()) }));
+        event.detail.on('disconnect', reason => window.relayEvents.push({ event: 'socket_disconnected',
+          reason: ['transport close', 'transport error', 'ping timeout', 'io server disconnect', 'io client disconnect'].includes(reason) ? reason : 'other',
+          at: Math.round(performance.now()) }));
+      });
       const Constructor = RTCPeerConnection;
       window.RTCPeerConnection = new Proxy(Constructor, { construct(target, args) {
         const peer = Reflect.construct(target, [{ ...args[0], iceTransportPolicy: 'relay' }]);
+        peer.addEventListener('connectionstatechange', () => window.relayEvents.push({ event: 'peer_state',
+          state: peer.connectionState, at: Math.round(performance.now()) }));
         window.relayPeers.push(peer); return peer;
       } });
     });
@@ -69,20 +78,27 @@ async function main() {
         item.type === 'candidate-pair' && item.state === 'succeeded' && item.nominated);
       const video = values.filter(item => item.type === 'inbound-rtp' && (item.kind || item.mediaType) === 'video');
       const tracks = document.querySelector('#localVideo').srcObject.getTracks();
-      return { state: peer.connectionState, local: stats.get(pair?.localCandidateId)?.candidateType,
+      return { state: peer.connectionState, socketConnected: Boolean(window.socket?.connected),
+        peerCount: window.relayPeers.length, events: window.relayEvents.splice(0),
+        local: stats.get(pair?.localCandidateId)?.candidateType,
         remote: stats.get(pair?.remoteCandidateId)?.candidateType,
         bytes: video.reduce((sum, item) => sum + (item.bytesReceived || 0), 0),
         frames: video.reduce((sum, item) => sum + (item.framesDecoded || 0), 0),
         tracks: tracks.map(track => track.id), live: tracks.every(track => track.readyState === 'live') };
     });
     let previous = await Promise.all(pages.map(read));
+    const peerCounts = previous.map(sample => sample.peerCount);
     let stalled = 0; let samples = 0;
     console.log(JSON.stringify({ event: 'started', secondsUntilExpiry: Math.ceil((originalExpiry - started) / 1000),
       captions: false, maxVideoBitratePerPeer: 24000 }));
     while (Date.now() < finishAt) {
       await delay(Math.min(30000, finishAt - Date.now()));
       const current = await Promise.all(pages.map(read));
+      console.log(JSON.stringify({ event: 'connections', elapsedSeconds: Math.round((Date.now() - started) / 1000),
+        states: current.map(sample => sample.state), sockets: current.map(sample => sample.socketConnected),
+        peerCounts: current.map(sample => sample.peerCount), events: current.map(sample => sample.events) }));
       for (const [index, sample] of current.entries()) {
+        assert.equal(sample.peerCount, peerCounts[index], 'Peer connection was replaced during the continuous relay check');
         assert.equal(sample.state, 'connected', 'Relay call disconnected');
         assert.equal(sample.local, 'relay'); assert.equal(sample.remote, 'relay');
         assert.deepEqual(sample.tracks, originalTracks[index]); assert.equal(sample.live, true);

@@ -92,6 +92,94 @@ test('permission denial leaves typed replies usable', async ({ browser }) => {
   } finally { await context.close(); }
 });
 
+for (const width of [1440, 390]) {
+  test(`permission retry recovers media and captions without losing a draft at ${width}px`, async ({ browser }, testInfo) => {
+    const f = await captionApp();
+    const pages = await captionPair(browser, f, () => {
+      const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      let allowed = false;
+      window.allowCallMedia = () => { allowed = true; };
+      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: constraints => allowed ? original(constraints)
+        : Promise.reject(new DOMException('Denied', 'NotAllowedError')) });
+    });
+    try {
+      await pages.b.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      await expect(pages.b.locator('#mediaStatus')).toContainText('access is blocked');
+      await expect(pages.b.locator('#stageWaiting p')).toContainText('Peer video is unavailable');
+      await expect(pages.b.locator('#retryMedia')).toBeEnabled();
+      await pages.b.locator('#replyText').fill('My draft stays here during media recovery');
+      if (width === 390) {
+        const label = await pages.b.locator('#stageWaiting p').boundingBox();
+        const preview = await pages.b.locator('.stage-pip').boundingBox();
+        expect(label.x + label.width <= preview.x || label.y + label.height <= preview.y).toBe(true);
+      }
+      const socketId = await pages.b.evaluate(() => window.socket.id);
+      await pages.b.screenshot({ path: testInfo.outputPath('media-denied.png'), fullPage: true });
+      expect(await pages.b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await pages.b.evaluate(() => window.allowCallMedia());
+      await pages.b.locator('#retryMedia').click();
+      await expect(pages.b.locator('#mediaRecovery')).toBeHidden();
+      if (await pages.b.locator('#captionAction').textContent() === 'Start captions') await pages.b.locator('#captionAction').click();
+      await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+      await expect(pages.a.locator('#peerCaptionStatus')).toHaveText('Peer captions on');
+      await expect.poll(() => pages.a.locator('#remoteVideo').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+      expect(await pages.b.evaluate(() => window.socket.id)).toBe(socketId);
+      await expect(pages.b.locator('#replyText')).toHaveValue('My draft stays here during media recovery');
+      await pages.b.locator('#replySend').click();
+      await expect(pages.a.getByText('My draft stays here during media recovery', { exact: true })).toBeVisible();
+      await pages.a.evaluate(() => window.allowCallMedia());
+      await pages.a.locator('#retryMedia').click();
+      await expect(pages.a.locator('#mediaRecovery')).toBeHidden();
+      await expect.poll(() => pages.a.locator('#aslVideo').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+      await expect(pages.a.locator('#stageWaiting')).toBeHidden();
+      expect(await pages.a.evaluate(() => document.querySelector('#aslVideo').srcObject === document.querySelector('#localVideo').srcObject)).toBe(true);
+
+      // stop() does not emit ended. Invoke the hardware-loss handler with an actually ended track;
+      // Firefox does not deliver a script-dispatched ended event on this native target.
+      await pages.b.locator('#toggleMic').click(); await pages.b.locator('#toggleCamera').click();
+      await pages.b.evaluate(() => {
+        window.oldCallTracks = document.querySelector('#localVideo').srcObject.getTracks();
+        const track = window.oldCallTracks.find(track => track.kind === 'audio');
+        const onEnded = track.onended; track.stop(); onEnded(new Event('ended'));
+      });
+      await expect(pages.b.locator('#mediaStatus')).toContainText('stopped');
+      await pages.b.locator('#retryMedia').click();
+      await expect(pages.b.locator('#mediaRecovery')).toBeHidden();
+      expect(await pages.b.evaluate(() => window.oldCallTracks.every(track => track.readyState === 'ended'))).toBe(true);
+      expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live' && !track.enabled))).toBe(true);
+      await expect(pages.b.locator('#toggleMic')).toHaveAttribute('aria-pressed', 'false');
+      await expect(pages.b.locator('#toggleCamera')).toHaveAttribute('aria-pressed', 'false');
+      // Exactly one handler remains after multiple media acquisitions.
+      await pages.b.locator('#toggleMic').click(); await pages.b.locator('#toggleCamera').click();
+      expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.enabled))).toBe(true);
+      expect(pages.errors).toEqual([]);
+    } finally { await pages.context.close(); await f.app.close(); }
+  });
+}
+
+test('unanswered media permission allows typed calls and late permission release is cleaned up', async ({ browser }) => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: constraints => new Promise(resolve => {
+      window.releasePermission = async () => {
+        window.lateStream = await original(constraints); resolve(window.lateStream);
+      };
+    }) });
+  });
+  const a = await context.newPage(); const b = await context.newPage();
+  try {
+    await a.goto(`${baseURL}/deaf.html?room=PENDINGMEDIA`); await b.goto(`${baseURL}/hearing.html?room=PENDINGMEDIA`);
+    await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await expect(b.locator('#retryMedia')).toBeDisabled();
+    await a.locator('#replyText').fill('Text while permission waits'); await a.locator('#replySend').click();
+    await expect(b.getByText('Text while permission waits', { exact: true })).toBeVisible();
+    await b.evaluate(() => window.dispatchEvent(new Event('pagehide')));
+    await b.evaluate(() => window.releasePermission());
+    await expect.poll(() => b.evaluate(() => window.lateStream.getTracks().every(track => track.readyState === 'ended'))).toBe(true);
+  } finally { await context.close(); }
+});
+
 test('peer departure preserves drafts; a replacement peer can connect', async ({ browser }) => {
   const f = await pair(browser);
   try {

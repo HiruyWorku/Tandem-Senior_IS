@@ -18,7 +18,7 @@ Reload both devices before the batch so they use the current client and connecti
 | M03 | Pause/restart captions, then mute/unmute the microphone. | Pause stops captions without turning off call audio; mute stops microphone audio and its captions; resume works. | Pending |
 | M04 | Switch a phone between Wi-Fi and cellular during a call. | Call and fresh captions recover; typed draft remains. Record whether manual retry is needed. | Pending |
 | M05 | Lock/unlock the phone or background Safari, then return. | Accurate interruption state, no stuck controls, clear recovery. Background media may be restricted by the browser. | Pending |
-| M06 | Deny camera/microphone permission, then use text; later allow access and retry. | Text still works; media failure and recovery are clear. | Pending |
+| M06 | Leave permission unanswered and use text; deny access, then allow it in browser settings and use Retry camera & microphone. Try both roles. | Text works while permission waits; recovery preserves the draft and restores video/captions. Previous mute/camera choices remain. | Pending |
 | M07 | Use supported devices/browsers beyond the confirmed Mac Chrome + phone Safari pairing, including Firefox and Android Chrome when available. | Admission, video, text, captions and Leave remain usable. Record browser versions. | Pending |
 | M08 | Use keyboard-only navigation, screen reader and 200% zoom; check portrait/landscape and small screens. | Controls remain reachable/labeled and messages readable; no trapped focus or hidden Leave/Send. | Pending |
 | M09 | Invite a third device, leave/rejoin, and try an invalid/expired invitation. | Third caller is refused; valid rejoin works; invalid links do not request camera/microphone. | Pending |
@@ -36,6 +36,7 @@ Reload both devices before the batch so they use the current client and connecti
 - Real Google 15-second incoming-PCM idle cutoff and deliberate restart passed, including fresh peer final captions and typed delivery during pause. The session deadline is covered by deterministic rotation/retry tests and an accelerated browser journey.
 - Desktop/mobile controlled server-busy recovery preserves and delivers drafts. Local admission tests cover concurrent capacity, replacement admission, raw polling cleanup and preservation of active room members.
 - Automated Chrome, Firefox and WebKit journeys cover native synthetic video, PCM capture, caption retry/pause, audio-context suspension, private invitations, reconnection and draft retention. This does not replace physical device/background/network checks.
+- Media recovery journeys cover denied/deferred permission, retry in both roles, signing preview, capture restart, retained mute choices, stopped old tracks and discarded late grants after page exit. Expired reconnects stop local capture and keep the draft.
 - Post-test streams, sockets and rooms returned to zero. Tests use synthetic media, not measured real-user accuracy.
 
 Pause captions or leave after testing to stop paid recognition. Two active microphones count as two audio streams. Experimental ASL/avatar remain disabled; do not interpret these checks as fluent ASL translation validation.

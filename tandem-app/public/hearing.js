@@ -3,8 +3,9 @@
   const roomCode = new URLSearchParams(window.location.search).get('room');
   if (!roomCode) { window.location.href = '/'; return; }
     if (!await window.TandemApp.authorizeInvitation(roomCode)) return;
-  await window.TandemApp.initMedia();
+  const mediaReady = window.TandemApp.initMedia();
   await window.TandemApp.loadIceServers();
   await window.TandemApp.createPeerConnection();
   window.TandemApp.initSocket('hearing', roomCode);
+  await mediaReady;
 })();

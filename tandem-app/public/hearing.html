@@ -73,6 +73,11 @@
     <!-- Sidebar: ASL interpretation -->
     <aside class="call-sidebar">
 
+      <section id="mediaRecovery" class="sidebar-panel media-recovery" aria-label="Camera and microphone" hidden>
+        <p id="mediaStatus" role="status"></p>
+        <button id="retryMedia" class="caption-action" type="button">Retry camera &amp; microphone</button>
+      </section>
+
       <!-- Your speech captions in sidebar -->
       <div class="sidebar-panel" style="flex-shrink:0;">
         <div class="captions-pane" id="localSubtitleStrip">
@@ -172,17 +177,6 @@
     const ov = document.getElementById('captionOverlay');
     if (ov) ov.style.display = 'flex';
   }, 2500);
-
-  // Hide waiting overlay once deaf user video plays
-  const remoteVid = document.getElementById('remoteVideo');
-  const waiting = document.getElementById('stageWaiting');
-  if (remoteVid && waiting) {
-    remoteVid.addEventListener('playing', () => {
-      waiting.style.opacity = '0';
-      waiting.style.transition = 'opacity 0.4s';
-      setTimeout(() => { waiting.style.display = 'none'; }, 400);
-    }, { once: true });
-  }
 
   // Mirror captions to sidebar
   const localCap = document.getElementById('localCaptions');

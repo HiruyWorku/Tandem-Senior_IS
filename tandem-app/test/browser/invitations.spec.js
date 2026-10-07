@@ -154,6 +154,8 @@ for (const width of [1440, 390]) {
       await expect(b.locator('#replySend')).toBeDisabled();
       expect(await b.evaluate(() => window.socket.connected || window.socket.active)).toBe(false);
       expect(await b.locator('#remoteVideo').evaluate(video => video.srcObject)).toBeNull();
+      expect(await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'ended'))).toBe(true);
+      await expect(b.locator('#toggleMic')).toBeDisabled();
       await b.screenshot({ path: testInfo.outputPath('expired-reconnect.png'), fullPage: true });
       expect(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
       expect(f.errors).toEqual([]);

@@ -48,6 +48,8 @@ Provider failures emit structured event names and sanitized numeric codes. SDK m
 
 ## Verify
 
+Camera and microphone permission does not block typed room admission. If access is denied or a device stops, use the in-call Retry camera & microphone action after fixing browser permissions or reconnecting the device. Recovery retains the current draft and mute/camera choices. Leaving or an invitation rejection stops local capture; a late permission grant is discarded.
+
 ```sh
 npm test
 npm run test:browser
