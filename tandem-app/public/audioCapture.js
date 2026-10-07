@@ -75,7 +75,10 @@ export class AudioCapture {
   }
 
   setEnabled(enabled) {
-    const next = Boolean(enabled);
+    // A context can become running while its worklet module is still loading.
+    // Never remember an enable that could not be delivered to the new port:
+    // a later sync must send it when the node actually exists.
+    const next = Boolean(enabled && this.node);
     if (this.enabled === next) return;
     this.enabled = next;
     this.node?.port.postMessage({ type: 'enabled', value: next });

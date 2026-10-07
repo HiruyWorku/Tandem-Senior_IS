@@ -28,6 +28,8 @@ Reload both devices before the batch so they use the current client and connecti
 | M13 | If a connection is temporarily unavailable/busy, keep an unsent draft and wait for recovery; then send. | Retry preserves the current page draft and sends it once the call is ready. Record any stuck state. | Pending |
 | M14 | Open Devices; select another camera/microphone or Browser default and apply. Try unplugging a selected USB device when available. | Device changes preserve text/drafts and mute/camera choices. A failed selection leaves existing tracks usable; missing hardware is labeled and another selection is available. Phone browsers may expose only one input. | Pending |
 
+| M15 | Leave a call page using browser navigation, then return with Back/Forward. Also try an expired invitation. | A cached return preserves the current-page draft and mute choices, revalidates access and restores the call; expired access does not reacquire camera/microphone. A full reload may lose the unsent draft. | Pending |
+
 ## Engineer-verified evidence (does not replace manual checks)
 
 - Staging HTTPS/private invitation/typed replies/forced TURN delivery and service restart pass.

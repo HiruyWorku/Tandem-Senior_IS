@@ -132,6 +132,43 @@ test('failed invitation creation can recover without enabling invalid role links
   } finally { await f.close(); }
 });
 
+test('cached return revalidates the invitation before reacquiring camera or microphone', async ({ browser }) => {
+  const f = await fixture(browser);
+  let expired = false;
+  await f.context.route('**/api/rooms/validate', route => expired
+    ? route.fulfill({ status: 403, contentType: 'application/json', body: '{"code":"invalid_invitation"}' }) : route.continue());
+  await f.context.addInitScript(() => {
+    const media = navigator.mediaDevices;
+    if (!media) return; // about:blank can precede the secure localhost document.
+    Object.defineProperty(navigator, 'mediaDevices', { value: media });
+    const nativeMedia = media.getUserMedia.bind(media);
+    window.mediaRequests = 0;
+    Object.defineProperty(media, 'getUserMedia', { value: constraints => {
+      window.mediaRequests++; return nativeMedia(constraints);
+    } });
+  });
+  try {
+    const landing = await f.context.newPage(); await landing.goto(f.url);
+    await expect(landing.locator('#copyLinkBtn')).toBeEnabled();
+    const call = await f.context.newPage(); await call.goto(await landing.locator('#deafLink').getAttribute('href'));
+    await expect(call.locator('#mediaRecovery')).toBeHidden();
+    await call.locator('#replyText').fill('Draft kept when cached invitation expires');
+    expect(await call.evaluate(() => window.mediaRequests)).toBe(1);
+    await call.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true })));
+    expired = true;
+    await call.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+    await expect(call.locator('#status-text')).toContainText('Invitation invalid or expired');
+    await expect(call.locator('#stageWaiting')).toBeVisible();
+    await expect(call.locator('#replyText')).toHaveValue('Draft kept when cached invitation expires');
+    expect(await call.evaluate(() => window.mediaRequests)).toBe(1);
+    await expect(call.locator('#toggleMic')).toBeDisabled();
+    await expect(call.locator('#toggleDevices')).toBeDisabled();
+    await expect(call.locator('#replySend')).toBeDisabled();
+    expect(await call.evaluate(() => window.socket.connected || window.socket.active)).toBe(false);
+    expect(f.errors).toEqual([]);
+  } finally { await f.close(); }
+});
+
 for (const width of [1440, 390]) {
   test(`expired reconnect stops retrying and retains the draft at ${width}px`, async ({ browser }, testInfo) => {
     const f = await fixture(browser);

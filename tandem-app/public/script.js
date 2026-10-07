@@ -101,6 +101,8 @@ let pc;
 let socket;
 let localStream;
 let mediaPending = false;
+let mediaGeneration = 0;
+let activeRoom;
 let mediaAccessAllowed = false;
 let mediaControlsBound = false;
 let speakerControlBound = false;
@@ -138,10 +140,13 @@ function setStatus(text, state) {
 }
 
 async function authorizeInvitation(room) {
+  const generation = mediaGeneration;
+  activeRoom = room;
   try {
     const response = await fetch('/capabilities', { signal: AbortSignal.timeout(10000) });
     if (!response.ok) throw new Error('Connection unavailable. Reload to try again.');
     const capabilities = await response.json();
+    if (pageClosing || generation !== mediaGeneration) return false;
     window.TandemApp.capabilities = capabilities;
     if (!capabilities.privateRooms && !invitationToken) { mediaAccessAllowed = true; deviceSettings.update(); return true; }
     const result = await fetch('/api/rooms/validate', {
@@ -149,16 +154,20 @@ async function authorizeInvitation(room) {
       body: JSON.stringify({ room }), signal: AbortSignal.timeout(10000),
     });
     if (!result.ok) throw new Error('Invitation invalid or expired. Ask your partner for the full invitation link.');
+    if (pageClosing || generation !== mediaGeneration) return false;
     mediaAccessAllowed = true;
     deviceSettings.update();
     return true;
   } catch (error) {
+    if (pageClosing || generation !== mediaGeneration) return false;
     const message = error.message || 'Invitation unavailable. Reload to try again.';
     setStatus(message, 'error');
     const reply = document.getElementById('replyStatus');
     if (reply) reply.textContent = message;
     const waiting = document.getElementById('stageWaiting');
     if (waiting) {
+      waiting.style.display = '';
+      waiting.style.opacity = '1';
       const label = waiting.querySelector('p');
       if (label) label.textContent = message;
       const spinner = waiting.querySelector('.spinner');
@@ -233,6 +242,7 @@ async function attachCallMedia(stream) {
 async function initMedia(choices = mediaChoices) {
   if (mediaPending || pageClosing || !mediaAccessAllowed) return false;
   mediaPending = true;
+  const generation = mediaGeneration;
   deviceSettings.update();
   setupMediaControls();
   showMediaRecovery(localStream ? 'Opening camera and microphone… Typed replies remain available.' :
@@ -249,11 +259,11 @@ async function initMedia(choices = mediaChoices) {
       }
     });
 
-    if (pageClosing || !mediaAccessAllowed) { nextStream.getTracks().forEach(track => track.stop()); return false; }
+    if (pageClosing || !mediaAccessAllowed || generation !== mediaGeneration) { nextStream.getTracks().forEach(track => track.stop()); return false; }
     const previous = localStream;
     if (joinedRoom && window.TandemApp.capabilities.captions) await setCaptionEnabled(false);
     await cleanupAudioProcessing();
-    if (pageClosing || !mediaAccessAllowed) { nextStream.getTracks().forEach(track => track.stop()); return false; }
+    if (pageClosing || !mediaAccessAllowed || generation !== mediaGeneration) { nextStream.getTracks().forEach(track => track.stop()); return false; }
     localStream = nextStream;
     localStream.getAudioTracks().forEach(track => { track.enabled = isMicOn; });
     localStream.getVideoTracks().forEach(track => { track.enabled = isCameraOn; });
@@ -261,7 +271,7 @@ async function initMedia(choices = mediaChoices) {
     if (signingVideo) { signingVideo.srcObject = localStream; signingVideo.play().catch(() => {}); }
     await attachCallMedia(localStream);
     previous?.getTracks().forEach(track => track.stop());
-    if (pageClosing || !mediaAccessAllowed) { nextStream.getTracks().forEach(track => track.stop()); return false; }
+    if (pageClosing || !mediaAccessAllowed || generation !== mediaGeneration) { nextStream.getTracks().forEach(track => track.stop()); return false; }
     for (const track of localStream.getTracks()) track.onended = () => {
       if (localStream !== nextStream || pageClosing || !mediaAccessAllowed) return;
       if (track.kind === 'audio') { captureState = 'unavailable'; setCaptionEnabled(false); }
@@ -270,6 +280,7 @@ async function initMedia(choices = mediaChoices) {
     };
     if (window.TandemApp.capabilities.captions) {
       await setupAudioProcessing(localStream);
+      if (pageClosing || generation !== mediaGeneration || !mediaAccessAllowed) return false;
       if (joinedRoom && isMicOn && !captionPaused && captureState === 'running') await setCaptionEnabled(true);
     }
     document.getElementById('mediaRecovery')?.setAttribute('hidden', '');
@@ -278,6 +289,7 @@ async function initMedia(choices = mediaChoices) {
     return true;
   } catch (error) {
     if (nextStream && localStream !== nextStream) nextStream.getTracks().forEach(track => track.stop());
+    if (pageClosing || generation !== mediaGeneration) return false;
     const reasons = {
       NotAllowedError: 'Camera or microphone access is blocked. Allow access in your browser settings, then retry.',
       NotFoundError: 'No camera or microphone was found. Connect a device, then retry.',
@@ -287,18 +299,22 @@ async function initMedia(choices = mediaChoices) {
     showMediaRecovery(`${reasons[error.name] || 'Camera or microphone unavailable. Check your devices and retry.'} You can still type replies.`);
     return false;
   } finally {
-    mediaPending = false;
-    deviceSettings.update();
-    updateMediaControls();
-    const button = document.getElementById('retryMedia');
-    if (button) { button.disabled = !mediaAccessAllowed; button.textContent = 'Retry camera & microphone'; }
-    updateStageWaiting();
+    if (generation === mediaGeneration) {
+      mediaPending = false;
+      deviceSettings.update();
+      updateMediaControls();
+      const button = document.getElementById('retryMedia');
+      if (button) { button.disabled = !mediaAccessAllowed; button.textContent = 'Retry camera & microphone'; }
+      updateStageWaiting();
+    }
   }
 }
 
 document.getElementById('retryMedia')?.addEventListener('click', () => { initMedia(); });
 
 function revokeMediaAccess() {
+  mediaGeneration++;
+  mediaPending = false;
   mediaAccessAllowed = false;
   deviceSettings.update();
   localStream?.getTracks().forEach(track => track.stop());
@@ -369,8 +385,10 @@ async function setupAudioProcessing(stream) {
 }
 
 async function cleanupAudioProcessing() {
-  await capture?.close();
-  captureState = 'unavailable';
+  const closing = capture?.close();
+  const generation = capture?.generation;
+  await closing;
+  if (capture?.generation === generation) captureState = 'unavailable';
 }
 
 async function setCaptionEnabled(enabled) {
@@ -412,6 +430,7 @@ document.getElementById('captionAction')?.addEventListener('click', () => {
 
 async function createPeerConnection() {
   const generation = ++connectionGeneration;
+  makingOffer = false;
   pendingIceCandidates = [];
   ignoreOffer = false;
   console.log('[client] creating RTCPeerConnection');
@@ -419,11 +438,13 @@ async function createPeerConnection() {
   clearTimeout(recoveryTimer);
   await loadIceServers();
 
-  if (generation !== connectionGeneration) return;
+  if (generation !== connectionGeneration || pageClosing) return;
   const config = {
     iceServers: ICE_SERVERS,
     iceTransportPolicy: 'all',
-    iceCandidatePoolSize: 10,
+    // Trickle ICE gathers on demand; preallocating ten pools consumes relay
+    // slots and bandwidth before the call has a negotiated media connection.
+    iceCandidatePoolSize: 0,
     bundlePolicy: 'max-bundle',
     rtcpMuxPolicy: 'require'
   };
@@ -505,7 +526,7 @@ async function createPeerConnection() {
 // Server restarts recreate the peer connection while preserving the reply draft.
 async function checkServerInstance() {
   try {
-    const res = await fetch('/instance-id', { cache: 'no-store' });
+    const res = await fetch('/instance-id', { cache: 'no-store', signal: AbortSignal.timeout(5000) });
     if (!res.ok) return;
     const { id } = await res.json();
     const stored = sessionStorage.getItem('tandem_server_id');
@@ -521,6 +542,7 @@ async function checkServerInstance() {
 }
 
 function initSocket(userType, roomCode) {
+  if (pageClosing) return;
   socket = io({ auth: { token: invitationToken } });
   window.socket = socket;
   window.dispatchEvent(new CustomEvent('tandem:socket', { detail: socket }));
@@ -573,16 +595,20 @@ function initSocket(userType, roomCode) {
     if (code === 'invalid_role' || code === 'leave_room_first') setStatus('Unable to join this room. Return home and try again.');
   });
   socket.on('connect', async () => {
+    const connectedSocket = socket;
     clearTimeout(connectionRetryTimer);
     console.log('[client] socket connected', socket.id);
 
     const restarted = await checkServerInstance();
+    if (pageClosing || socket !== connectedSocket || !connectedSocket.connected) return;
 
     if (restarted || hasConnected || (pc && (pc.signalingState === 'closed' || pc.connectionState === 'closed' || pc.connectionState === 'failed'))) {
       console.log('[client] Stale RTCPeerConnection detected on reconnect — recreating');
       try { pc.close(); } catch (_) {}
       await createPeerConnection();
     }
+
+    if (pageClosing || socket !== connectedSocket || !connectedSocket.connected) return;
 
     hasConnected = true;
     socket.emit('join', { userType, room: roomCode, token: invitationToken });
@@ -714,6 +740,7 @@ function initSocket(userType, roomCode) {
 
 async function makeOffer() {
   if (makingOffer || !socket?.connected || !joinedRoom || !peerPresent) return;
+  const generation = connectionGeneration;
   makingOffer = true;
   try {
     // Failed ICE can restart on the existing connection; only closed peers need replacement.
@@ -727,7 +754,7 @@ async function makeOffer() {
     if (pc !== connection || connection.signalingState !== 'stable' || !joinedRoom || !peerPresent) return;
     await connection.setLocalDescription(offer);
     if (pc === connection && joinedRoom && peerPresent && socket.connected) socket.emit('signal:offer', { sdp: connection.localDescription });
-  } finally { makingOffer = false; }
+  } finally { if (generation === connectionGeneration) makingOffer = false; }
 }
 
 function toggleMic() {
@@ -867,6 +894,10 @@ window.addEventListener('online', () => { if (joinedRoom) iceLease.refresh().cat
 
 window.addEventListener('pagehide', () => {
   pageClosing = true;
+  mediaGeneration++;
+  connectionGeneration++;
+  mediaPending = false;
+  mediaAccessAllowed = false;
   deviceSettings.dispose();
   clearTimeout(connectionRetryTimer);
   iceLease.stop();
@@ -875,4 +906,34 @@ window.addEventListener('pagehide', () => {
   pc?.close();
   localStream?.getTracks().forEach(track => track.stop());
   cleanupAudioProcessing();
+});
+
+window.addEventListener('pageshow', async event => {
+  if (!event.persisted || !pageClosing || !activeRoom) return;
+  pageClosing = false;
+  const generation = mediaGeneration;
+  hasConnected = false;
+  makingOffer = false;
+  joinedRoom = false;
+  peerPresent = false;
+  pc = null;
+  localStream = null;
+  if (localVideo) localVideo.srcObject = null;
+  if (signingVideo) signingVideo.srcObject = null;
+  if (remoteVideo) remoteVideo.srcObject = null;
+  updateMediaControls();
+  updateCaptionState();
+  deviceSettings.restore();
+  setStatus('Restoring your call… Your draft is saved here.');
+  try {
+    if (!await authorizeInvitation(activeRoom) || pageClosing || generation !== mediaGeneration) return;
+    const media = initMedia();
+    await createPeerConnection();
+    if (pageClosing || generation !== mediaGeneration) return;
+    if (socket) socket.connect();
+    else initSocket(signingVideo ? 'deaf' : 'hearing', activeRoom);
+    await media;
+  } catch {
+    if (!pageClosing && generation === mediaGeneration) setStatus('Could not restore this call. Reload to try again; copy your draft first.', 'error');
+  }
 });

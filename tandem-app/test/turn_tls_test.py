@@ -47,6 +47,11 @@ class TurnTlsTests(unittest.TestCase):
         self.assertIn("listening-port=3478", content)
         self.assertIn("min-port=49160\nmax-port=49200", content)
         self.assertIn("tls-listening-port=443", content)
+        self.assertIn("denied-peer-ip=169.254.0.0-169.254.255.255", content)
+        self.assertIn("denied-peer-ip=10.0.0.0-10.255.255.255", content)
+        self.assertIn("no-tcp-relay\nno-multicast-peers\nno-cli", content)
+        self.assertIn("user-quota=8\ntotal-quota=40", content)
+        self.assertEqual(tls.tls_config(content, self.root), content)
         self.assertNotIn("\nno-tls\n", content)
         self.assertIn("AmbientCapabilities=CAP_NET_BIND_SERVICE", self.dropin.read_text())
         self.assertIn("ExecReload=/bin/kill -USR2 $MAINPID", self.dropin.read_text())
@@ -66,7 +71,8 @@ class TurnTlsTests(unittest.TestCase):
         self.assertEqual(self.commands, [])
 
     def test_insecure_authentication_is_rejected_before_files_change(self):
-        for settings in ["no-auth\n", self.original + "user=static:credential\n"]:
+        for settings in ["no-auth\n", self.original + "user=static:credential\n",
+                         self.original + "allowed-peer-ip=169.254.169.254\n", self.original + "server-relay\n"]:
             self.config.write_text(settings)
             with self.assertRaises(RuntimeError):
                 self.activate()

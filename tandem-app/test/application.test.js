@@ -27,10 +27,13 @@ const ack = (socket, event, data) => new Promise((resolve, reject) => {
   socket.timeout(2000).emit(event, data, (error, value) => error ? reject(error) : resolve(value));
 });
 const join = (socket, room = 'ABCD', userType = 'hearing') => ack(socket, 'join', { room, userType });
-const receive = (socket, event) => new Promise((resolve, reject) => {
+const receive = (socket, event, matches = () => true) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => { socket.off(event, listener); reject(new Error(`Missing ${event}`)); }, 2000);
-  const listener = data => { clearTimeout(timer); resolve(data); };
-  socket.once(event, listener);
+  const listener = data => {
+    if (!matches(data)) return;
+    clearTimeout(timer); socket.off(event, listener); resolve(data);
+  };
+  socket.on(event, listener);
 });
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const leave = socket => new Promise(resolve => socket.emit('leave', resolve));
@@ -208,7 +211,7 @@ test('prediction rejects malformed coordinates without calling Python', async t 
 test('caption controls acknowledge pause/resume and advertise it to the peer', async t => {
   const f = await fixture(t, { env: { REQUIRE_ROOM_TOKEN: 'false', ENABLE_SPEECH: 'true' } });
   const a = await f.client(); const b = await f.client(); await join(a); await join(b);
-  const status = receive(b, 'peerCaptionStatus');
+  const status = receive(b, 'peerCaptionStatus', value => value.status === 'paused');
   assert.equal((await ack(a, 'caption:state', { enabled: false })).ok, true);
   assert.equal((await status).status, 'paused');
   assert.equal(f.bindings.has(a.id), false);

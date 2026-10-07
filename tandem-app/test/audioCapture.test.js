@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 async function fixture({ moduleLoad = async () => {}, close = async () => {} } = {}) {
   const { AudioCapture } = await import('../public/audioCapture.js');
   const originalWindow = global.window; const originalNode = global.AudioWorkletNode;
-  const contexts = []; const states = []; const disconnected = []; const closedPorts = [];
+  const contexts = []; const states = []; const disconnected = []; const closedPorts = []; const messages = [];
   class Context {
     constructor() { this.state = 'running'; this.audioWorklet = { addModule: moduleLoad }; contexts.push(this); }
     createMediaStreamSource() { return { connect() {}, disconnect: () => disconnected.push('source') }; }
@@ -12,7 +12,7 @@ async function fixture({ moduleLoad = async () => {}, close = async () => {} } =
     async close() { await close(); this.state = 'closed'; }
   }
   class Node {
-    constructor() { this.port = { postMessage() {}, close: () => closedPorts.push(true) }; }
+    constructor() { this.port = { postMessage: message => messages.push(message), close: () => closedPorts.push(true) }; }
     connect() {}
     disconnect() { disconnected.push('node'); }
   }
@@ -21,7 +21,7 @@ async function fixture({ moduleLoad = async () => {}, close = async () => {} } =
   const stream = { getTracks: () => [{ stop: () => stoppedTracks++ }] };
   const capture = new AudioCapture({ onAudio() {}, onState: state => states.push(state),
     setupTimeoutMs: 20, resumeTimeoutMs: 20, closeTimeoutMs: 20 });
-  return { capture, contexts, states, stream, disconnected, closedPorts,
+  return { capture, contexts, states, stream, disconnected, closedPorts, messages,
     stopped: () => stoppedTracks,
     restore: async () => { await capture.close(); global.window = originalWindow; global.AudioWorkletNode = originalNode; } };
 }
@@ -77,5 +77,20 @@ test('a newer start supersedes a retry waiting for the old context to close', as
     assert.equal(f.capture.context, active);
     assert.equal(f.contexts.length, 2);
     assert.equal(f.stopped(), 0);
+  } finally { await f.restore(); }
+});
+
+test('early running state cannot consume the enable message before the worklet port exists', async () => {
+  let finishModule;
+  const f = await fixture({ moduleLoad: () => new Promise(resolve => { finishModule = resolve; }) });
+  try {
+    const starting = f.capture.start(f.stream);
+    await Promise.resolve();
+    f.capture.setEnabled(true);
+    assert.equal(f.capture.enabled, false);
+    finishModule(); await starting;
+    f.capture.setEnabled(true);
+    assert.equal(f.capture.enabled, true);
+    assert.deepEqual(f.messages, [{ type: 'enabled', value: true }]);
   } finally { await f.restore(); }
 });

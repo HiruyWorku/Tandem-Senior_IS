@@ -51,9 +51,19 @@ def tls_config(original, root):
         raise RuntimeError("Shared-secret authentication must be configured before TLS")
     if any(re.match(r"(no-auth|user|lt-cred-mech)\s*(=|$)", line) for line in active):
         raise RuntimeError("Conflicting TURN authentication; configuration unchanged")
-    managed = r"^\s*(tls-listening-port|cert|pkey|no-tls|no-dtls|no-sslv3|no-tlsv1|no-tlsv1_1)\s*(=|$)"
+    # An allow entry overrides a deny range in coturn. Do not silently retain an
+    # exception that could expose cloud-private or metadata endpoints.
+    if any(re.match(r"(allowed-peer-ip|allow-loopback-peers|server-relay)\s*(=|$)", line) for line in active):
+        raise RuntimeError("Unsafe or custom relay peer exception; review before TLS migration")
+    managed = r"^\s*(tls-listening-port|cert|pkey|no-tls|no-dtls|no-sslv3|no-tlsv1|no-tlsv1_1|no-tcp-relay|no-multicast-peers|user-quota|total-quota|max-bps|bps-capacity|no-cli)\s*(=|$)"
     retained = [line for line in original.splitlines() if not re.match(managed, line)]
-    return "\n".join(retained) + f"\ntls-listening-port=443\ncert={root}/current/fullchain.pem\npkey={root}/current/privkey.pem\nno-dtls\nno-sslv3\nno-tlsv1\nno-tlsv1_1\n"
+    denied = ["0.0.0.0-0.255.255.255", "10.0.0.0-10.255.255.255", "100.64.0.0-100.127.255.255",
+              "127.0.0.0-127.255.255.255", "169.254.0.0-169.254.255.255", "172.16.0.0-172.31.255.255",
+              "192.0.0.0-192.0.0.255", "192.168.0.0-192.168.255.255", "198.18.0.0-198.19.255.255",
+              "224.0.0.0-255.255.255.255", "::", "::1", "fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+              "fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff"]
+    additions = [f"denied-peer-ip={address}" for address in denied if f"denied-peer-ip={address}" not in active]
+    return "\n".join(retained + additions) + f"\ntls-listening-port=443\ncert={root}/current/fullchain.pem\npkey={root}/current/privkey.pem\nno-dtls\nno-sslv3\nno-tlsv1\nno-tlsv1_1\nno-tcp-relay\nno-multicast-peers\nno-cli\nuser-quota=8\ntotal-quota=40\nmax-bps=500000\nbps-capacity=10000000\n"
 
 
 def validate_certificate(lineage, hostname, execute=run):

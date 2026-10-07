@@ -317,6 +317,82 @@ test('peer departure preserves drafts; a replacement peer can connect', async ({
   } finally { await f.context.close(); }
 });
 
+test('a cached-page return readmits the call and retains drafts without duplicating device controls', async ({ browser }) => {
+  const f = await pair(browser);
+  try {
+    await expect.poll(() => f.b.locator('#localVideo').evaluate(video => video.srcObject?.getTracks().length || 0)).toBe(2);
+    await f.b.locator('#toggleMic').click(); await f.b.locator('#toggleCamera').click();
+    await f.b.locator('#replyText').fill('Draft survives a cached-page return');
+    const oldSocket = await f.b.evaluate(() => {
+      window.beforeCachedReturn = document.querySelector('#localVideo').srcObject.getTracks();
+      const id = window.socket.id;
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+      return id;
+    });
+    await expect.poll(() => f.b.evaluate(() => window.beforeCachedReturn.every(track => track.readyState === 'ended'))).toBe(true);
+    await expect(f.a.locator('#replyStatus')).toContainText('Your peer left');
+    await f.b.evaluate(() => window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true })));
+    await expect(f.b.locator('#replyStatus')).toHaveText('Ready to send.');
+    await expect(f.b.locator('#mediaRecovery')).toBeHidden();
+    expect(await f.b.evaluate(() => window.socket.id)).not.toBe(oldSocket);
+    await expect(f.b.locator('#replyText')).toHaveValue('Draft survives a cached-page return');
+    expect(await f.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live' && !track.enabled))).toBe(true);
+    await f.b.locator('#toggleMic').click(); await f.b.locator('#toggleCamera').click();
+    expect(await f.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.enabled))).toBe(true);
+    await f.b.locator('#toggleDevices').click(); await expect(f.b.locator('#deviceSettings')).toBeVisible();
+    await expect(f.b.locator('#applyDevices')).toBeEnabled(); await f.b.locator('#closeDevices').click();
+    await f.b.locator('#replySend').click();
+    await expect(f.a.getByText('Draft survives a cached-page return', { exact: true })).toBeVisible();
+    await expect(f.a.locator('.conversation-text').filter({ hasText: 'Draft survives a cached-page return' })).toHaveCount(1);
+    expect(f.errors).toEqual([]);
+  } finally { await f.context.close(); }
+});
+
+test('a grant from the retired page cannot replace media acquired after cached-page return', async ({ browser }) => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const media = navigator.mediaDevices;
+    Object.defineProperty(navigator, 'mediaDevices', { value: media });
+    const nativeMedia = media.getUserMedia.bind(media);
+    let calls = 0;
+    Object.defineProperty(media, 'getUserMedia', { value: constraints => {
+      if (++calls > 1) return nativeMedia(constraints);
+      return new Promise(resolve => { window.releaseRetiredPermission = async () => {
+        window.retiredStream = await nativeMedia(constraints); resolve(window.retiredStream);
+      }; });
+    } });
+  });
+  const a = await context.newPage(); const b = await context.newPage();
+  try {
+    await a.goto(`${baseURL}/deaf.html?room=RETIREDMEDIA`); await b.goto(`${baseURL}/hearing.html?room=RETIREDMEDIA`);
+    await expect(b.locator('#replyStatus')).toHaveText('Ready to send.');
+    await b.evaluate(() => {
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+    await expect(b.locator('#mediaRecovery')).toBeHidden();
+    const tracks = await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id));
+    await b.evaluate(() => window.releaseRetiredPermission());
+    await expect.poll(() => b.evaluate(() => window.retiredStream.getTracks().every(track => track.readyState === 'ended'))).toBe(true);
+    expect(await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(tracks);
+    await expect(b.locator('#replyStatus')).toHaveText('Ready to send.');
+    await b.locator('#replyText').fill('Fresh call after a late old grant'); await b.locator('#replySend').click();
+    await expect(a.getByText('Fresh call after a late old grant', { exact: true })).toBeVisible();
+  } finally { await context.close(); }
+});
+
+test('a stalled instance check is bounded and does not prevent a typed call', async ({ browser }) => {
+  const context = await browser.newContext();
+  await context.route('**/instance-id', () => new Promise(() => {}));
+  const a = await context.newPage(); const b = await context.newPage();
+  try {
+    await a.goto(`${baseURL}/deaf.html?room=INSTANCE`); await b.goto(`${baseURL}/hearing.html?room=INSTANCE`);
+    await expect(b.locator('#replyStatus')).toHaveText('Ready to send.', { timeout: 10000 });
+    await b.locator('#replyText').fill('Text despite a stalled instance check'); await b.locator('#replySend').click();
+    await expect(a.getByText('Text despite a stalled instance check', { exact: true })).toBeVisible();
+  } finally { await context.close(); }
+});
+
 test('desktop and mobile replies fit the viewport with long content', async ({ browser }) => {
   const f = await pair(browser);
   const directory = path.resolve(__dirname, '../../../.impeccable/review');
@@ -414,6 +490,35 @@ async function captionPair(browser, f, script) {
   return { context, a, b, errors };
 }
 
+test('cached caption call preserves an explicit pause and resumes fresh native capture', async ({ browser }) => {
+  const f = await captionApp(); const pages = await captionPair(browser, f);
+  try {
+    if (await pages.a.locator('#captionAction').textContent() === 'Start captions') await pages.a.locator('#captionAction').click();
+    await expect(pages.a.locator('#captionStatus')).toHaveText('Your captions on');
+    await pages.a.locator('#captionAction').click();
+    await expect(pages.a.locator('#captionStatus')).toHaveText('Your captions paused');
+    await pages.a.locator('#replyText').fill('Paused-caption draft stays here');
+    await pages.a.evaluate(() => {
+      window.beforeCachedCaption = document.querySelector('#localVideo').srcObject.getTracks();
+      window.dispatchEvent(new PageTransitionEvent('pagehide', { persisted: true }));
+      window.dispatchEvent(new PageTransitionEvent('pageshow', { persisted: true }));
+    });
+    await expect(pages.a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await expect(pages.a.locator('#mediaRecovery')).toBeHidden();
+    await expect(pages.a.locator('#captionStatus')).toHaveText('Your captions paused');
+    await expect(pages.a.locator('#replyText')).toHaveValue('Paused-caption draft stays here');
+    expect(await pages.a.evaluate(() => window.beforeCachedCaption.every(track => track.readyState === 'ended'))).toBe(true);
+    expect(await pages.a.evaluate(() => document.querySelector('#aslVideo').srcObject === document.querySelector('#localVideo').srcObject)).toBe(true);
+    await pages.a.locator('#captionAction').click();
+    await expect(pages.a.locator('#captionStatus')).toHaveText('Your captions on');
+    await expect(pages.b.locator('#peerCaptionStatus')).toHaveText('Peer captions on');
+    await expect(pages.b.locator('#remoteCaptions')).toHaveText('Synthetic caption result.');
+    await pages.a.locator('#replySend').click();
+    await expect(pages.b.getByText('Paused-caption draft stays here', { exact: true })).toBeVisible();
+    expect(pages.errors).toEqual([]);
+  } finally { await pages.context.close(); await f.app.close(); }
+});
+
 test('real AudioWorklet sends binary PCM, mute stops transmission, and unmute keeps video live', async ({ browser }) => {
   const f = await captionApp(); const pages = await captionPair(browser, f);
   try {
@@ -480,6 +585,9 @@ test('automatic caption limit pauses recognition while video and typed replies r
 test('caption pause is independent of microphone and provider retry does not stop call tracks', async ({ browser }) => {
   const f = await captionApp({ failProvider: true }); const pages = await captionPair(browser, f);
   try {
+    for (const page of [pages.a, pages.b]) {
+      if (await page.locator('#captionAction').textContent() === 'Start captions') await page.locator('#captionAction').click();
+    }
     await expect.poll(async () => (await Promise.all([pages.a, pages.b].map(page =>
       page.locator('#captionAction').textContent()))).includes('Retry captions')).toBe(true);
     const failed = await pages.a.locator('#captionAction').isVisible() && await pages.a.locator('#captionAction').textContent() === 'Retry captions'

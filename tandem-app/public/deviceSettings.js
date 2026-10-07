@@ -21,9 +21,10 @@ export class DeviceSettings {
     this.form?.addEventListener('submit', async event => {
       event.preventDefault();
       if (this.disposed || !this.allowed() || this.pending() || this.loading) return;
+      const generation = this.refreshGeneration;
       this.status.textContent = 'Opening selected camera and microphone…';
       const success = await this.apply({ videoId: this.camera.value, audioId: this.microphone.value });
-      if (this.disposed || !this.allowed()) return;
+      if (this.disposed || !this.allowed() || generation !== this.refreshGeneration) return;
       this.status.textContent = success ? 'Your selected devices are in use.' :
         'Could not open that selection. Check camera and microphone access, or choose another device.';
       this.update();
@@ -111,6 +112,13 @@ export class DeviceSettings {
   dispose() {
     this.disposed = true;
     navigator.mediaDevices?.removeEventListener('devicechange', this.onDeviceChange);
+    this.update();
+  }
+
+  restore() {
+    if (!this.disposed) return;
+    this.disposed = false;
+    navigator.mediaDevices?.addEventListener('devicechange', this.onDeviceChange);
     this.update();
   }
 }
