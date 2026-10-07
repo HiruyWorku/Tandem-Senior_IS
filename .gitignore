@@ -147,3 +147,5 @@ __marimo__/
 tandem-app/test-results/
 tandem-app/test-results-compat/
 tandem-app/playwright-report/
+tandem-app/state/
+tandem-app/relay-renewal-report.jsonl

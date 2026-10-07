@@ -18,6 +18,7 @@ let captionPaused = false;
 let captureState = 'unavailable';
 let providerState = 'disabled';
 let providerRetryable = false;
+let providerReason = null;
 let captionRequest = 0;
 let captionBusy = false;
 
@@ -346,6 +347,12 @@ function updateCaptionState() {
   else if (captureState !== 'running') { text = 'Start captions to use your microphone'; label = 'Start captions'; }
   else if (providerState === 'unavailable') { label = 'Retry captions'; visible = providerRetryable; }
   else if (providerState === 'paused') { label = 'Start captions'; }
+  if (captionsConfigured && isMicOn && !captionPaused && providerState === 'paused' &&
+      ['daily_budget', 'budget_unavailable'].includes(providerReason)) {
+    text = providerReason === 'daily_budget' ? 'Daily caption allowance reached · type a reply' :
+      'Caption allowance unavailable · type a reply';
+    label = 'Check captions';
+  }
   if (status) status.textContent = text;
   if (action) { action.hidden = !visible; action.textContent = label; action.disabled = captionBusy; }
 }
@@ -410,6 +417,7 @@ async function setCaptionEnabled(enabled) {
   return new Promise(resolve => socket.timeout(5000).emit('caption:state', { enabled }, (error, result) => {
     if (request !== captionRequest || !joinedRoom) { resolve(); return; }
     captionBusy = false;
+    providerReason = null;
     if (error || !result?.ok) {
       providerState = 'unavailable'; providerRetryable = true;
     } else {
@@ -548,6 +556,7 @@ function initSocket(userType, roomCode) {
   window.dispatchEvent(new CustomEvent('tandem:socket', { detail: socket }));
   socket.on('captionStatus', data => {
     providerState = data.status;
+    providerReason = data.reason || null;
     providerRetryable = data.retryable !== false;
     syncCapture();
   });
@@ -556,7 +565,9 @@ function initSocket(userType, roomCode) {
     const labels = { ready: 'Peer captions ready', starting: 'Peer captions starting…', active: 'Peer captions on',
       paused: 'Peer captions paused', disabled: 'Peer captions unavailable', reconnecting: 'Peer captions reconnecting…',
       unavailable: 'Peer captions unavailable · you can exchange typed replies', limited: 'Peer captions limited · some audio was skipped' };
-    if (element) element.textContent = labels[data.status] || 'Peer captions unavailable';
+    if (element) element.textContent = data.reason === 'daily_budget' ? 'Peer daily caption allowance reached · type a reply' :
+      data.reason === 'budget_unavailable' ? 'Peer caption allowance unavailable · type a reply' :
+        labels[data.status] || 'Peer captions unavailable';
   });
   socket.on('disconnect', reason => {
     clearTimeout(recoveryTimer); clearTimeout(connectionRetryTimer);

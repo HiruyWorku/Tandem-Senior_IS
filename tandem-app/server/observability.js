@@ -2,6 +2,7 @@ const { timingSafeEqual } = require('node:crypto');
 const EVENTS = new Set(['room_joined', 'room_rejected', 'message_sent', 'speech_job_failed',
   'connection_rejected', 'connection_idle_closed',
   'speech_started', 'speech_rotated', 'speech_replayed', 'speech_retry', 'speech_unavailable', 'speech_limited', 'audio_dropped',
+  'speech_daily_budget', 'speech_budget_unavailable',
   'avatar_provider_failed', 'ice_issued', 'ice_denied', 'client_ice_renewed', 'client_ice_failed', 'client_media_failed', 'http_failed']);
 
 /** Fixed aggregate counters only: no identifiers, content, URLs, or free-form labels. */
@@ -33,7 +34,7 @@ function createObservability({ env = {}, now = Date.now, logger = event => conso
       const expected = Buffer.from(`Bearer ${env.METRICS_TOKEN}`);
       return actual.length === expected.length && timingSafeEqual(actual, expected);
     },
-    render({ sockets = 0, rooms = 0, streams = 0, jobs = 0, ready = true } = {}) {
+    render({ sockets = 0, rooms = 0, streams = 0, jobs = 0, ready = true, captionBudget } = {}) {
       const memory = process.memoryUsage();
       const lines = ['# HELP tandem_events_total Aggregate application events.', '# TYPE tandem_events_total counter'];
       for (const [event, count] of counters) lines.push(`tandem_events_total{event="${event}"} ${count}`);
@@ -45,6 +46,14 @@ function createObservability({ env = {}, now = Date.now, logger = event => conso
         provider_jobs: jobs, uptime_seconds: Math.max(0, now() - started) / 1000,
         heap_bytes: memory.heapUsed, resident_bytes: memory.rss })) {
         lines.push(`# TYPE tandem_${name} gauge`, `tandem_${name} ${value}`);
+      }
+      if (captionBudget) {
+        const budgetValues = { available: Number(captionBudget.available), limit_seconds: captionBudget.limitSeconds,
+          remaining_seconds: captionBudget.remainingSeconds };
+        if (captionBudget.available) budgetValues.reserved_seconds = captionBudget.reservedSeconds;
+        for (const [name, value] of Object.entries(budgetValues)) {
+          lines.push(`# TYPE tandem_caption_budget_${name} gauge`, `tandem_caption_budget_${name} ${value}`);
+        }
       }
       return `${lines.join('\n')}\n`;
     },

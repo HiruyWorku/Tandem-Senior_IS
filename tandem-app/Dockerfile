@@ -6,6 +6,7 @@ RUN npm ci --omit=dev --cache /tmp/npm-cache \
 COPY server.js ./
 COPY server/ ./server/
 COPY public/ ./public/
+RUN mkdir -p /app/state && chown node:node /app/state
 ENV NODE_ENV=production
 EXPOSE 3000
 USER node

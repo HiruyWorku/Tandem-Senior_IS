@@ -1,6 +1,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const { createAccess } = require('../../server/access');
+const { createAccess, positiveInteger } = require('../../server/access');
+const { createDailyCaptionBudget } = require('../../server/captionBudget');
 const { createIceConfig } = require('../../server/iceConfig');
 const { createObservability } = require('../../server/observability');
 
@@ -17,6 +18,8 @@ function parse(file) {
 function validate(settings, runtime) {
   if (!/^(?=.{1,253}$)[a-z0-9](?:[a-z0-9.-]*[a-z0-9])$/.test(settings.APP_HOST || '') || !settings.APP_HOST.includes('.')) throw new Error('APP_HOST must be a DNS hostname.');
   if (!['true', 'false'].includes(settings.ENABLE_SPEECH || 'false')) throw new Error('ENABLE_SPEECH must be true or false.');
+  const dailySeconds = positiveInteger(settings.CAPTION_DAILY_SECONDS, 3600, 0, 86400);
+  if (dailySeconds) createDailyCaptionBudget({ file: '/app/state/caption-budget.json', limitSeconds: dailySeconds });
   for (const key of ['ROOM_SIGNING_SECRET', 'METRICS_TOKEN', 'TURN_SHARED_SECRET']) {
     if (!runtime[key] || /REPLACE|EXAMPLE/i.test(runtime[key]) || Buffer.byteLength(runtime[key]) < 32 || /[\s$#'"\\]/.test(runtime[key])) throw new Error(`Provide a non-placeholder ${key} with at least 32 bytes and no environment interpolation characters.`);
   }

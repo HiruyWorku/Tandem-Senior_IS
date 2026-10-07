@@ -9,4 +9,6 @@ test('staging preflight accepts independent secrets and rejects placeholders, in
     { METRICS_TOKEN: runtime.ROOM_SIGNING_SECRET }, { TURN_SHARED_SECRET: '$'.repeat(64) },
     { TURN_USERNAME: 'legacy' }, { GOOGLE_APPLICATION_CREDENTIALS: '/tmp/key.json' }, { TURN_URLS: '' }]) assert.throws(() => validate(settings, { ...runtime, ...change }));
   assert.throws(() => validate({ APP_HOST: 'https://example.com' }, runtime));
+  for (const value of ['bad', '-1', '1', '86401']) assert.throws(() => validate({ ...settings, CAPTION_DAILY_SECONDS: value }, runtime));
+  assert.equal(validate({ ...settings, CAPTION_DAILY_SECONDS: '0' }, runtime), true);
 });

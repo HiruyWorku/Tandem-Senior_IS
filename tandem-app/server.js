@@ -9,6 +9,7 @@ const { createAccess, createRateLimit, positiveInteger } = require('./server/acc
 const { createIceConfig } = require('./server/iceConfig');
 const { createObservability } = require('./server/observability');
 const { createConnectionAdmission, closeUnadmittedTransports } = require('./server/connectionAdmission');
+const { createDailyCaptionBudget } = require('./server/captionBudget');
 
 /** Build an isolated application; imports never open a port or call an AI provider. */
 function createApplication({ env = process.env, speech, interpretLetters, synthesize, logger } = {}) {
@@ -61,11 +62,13 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
   io.use(createConnectionAdmission({ maxConnections, unjoinedTimeoutMs, isDraining: () => draining, telemetry }));
   closeUnadmittedTransports(io, { unjoinedTimeoutMs, telemetry });
   const { SpeechToTextService } = require('./server/speechToText');
+  const dailySeconds = positiveInteger(env.CAPTION_DAILY_SECONDS, 0, 0, 86400);
+  const dailyBudget = dailySeconds ? createDailyCaptionBudget({ file: env.CAPTION_BUDGET_FILE, limitSeconds: dailySeconds }) : null;
   const maxStreams = positiveInteger(env.MAX_CAPTION_STREAMS, 20, 1, 100);
   const maxSessionMs = positiveInteger(env.CAPTION_MAX_SESSION_SECONDS, 0, 0, 14400) * 1000;
   const idleMs = positiveInteger(env.CAPTION_IDLE_SECONDS, 0, 0, 300) * 1000;
   speech ||= new SpeechToTextService({ languageCode: env.LANGUAGE_CODE || 'en-US',
-    maxStreams, maxSessionMs, idleMs, telemetry });
+    maxStreams, maxSessionMs, idleMs, dailyBudget, telemetry });
   interpretLetters ||= letters => require('./server/claudeService').interpretLetters(letters);
   synthesize ||= text => require('./server/textToSpeech').synthesize(text);
   const protocol = registerCallProtocol(io, { telemetry, speech, interpretLetters, synthesize, capabilities,
@@ -146,7 +149,8 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
     if (!telemetry.authorized(req.headers.authorization)) return res.sendStatus(403);
     const rooms = [...io.sockets.adapter.rooms.keys()].filter(room => room.startsWith('call:')).length;
     const streams = [...(speech.recognizeStreams?.values() || [])].filter(info => info.stream).length;
-    res.type('text/plain; version=0.0.4').send(telemetry.render({ sockets: io.sockets.sockets.size, rooms, streams, jobs: protocol.providerJobs(), ready: !draining }));
+    res.type('text/plain; version=0.0.4').send(telemetry.render({ sockets: io.sockets.sockets.size, rooms, streams,
+      jobs: protocol.providerJobs(), ready: !draining, captionBudget: dailyBudget?.snapshot() }));
   });
   app.get('/health', (_req, res) => res.status(200).send('OK'));
   app.get('/capabilities', (_req, res) => res.set('Cache-Control', 'no-store').json(capabilities));

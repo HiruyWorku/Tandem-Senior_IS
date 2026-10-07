@@ -59,6 +59,27 @@ test('authenticated metrics report real room counts and ignore arbitrary client 
   assert.equal(output.includes('arbitrary secret'), false); assert.equal(output.includes(token), false);
 });
 
+test('protected metrics report durable aggregate allowance and unreadable ledger without breaking readiness', async t => {
+  const fs = require('node:fs'); const path = require('node:path'); const os = require('node:os');
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tandem-budget-metrics-'));
+  const file = path.join(directory, 'ledger');
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  fs.writeFileSync(file, JSON.stringify({ version: 1, day: new Date().toISOString().slice(0, 10), reservedMs: 15000 }));
+  const f = await fixture(t, { METRICS_TOKEN: token, CAPTION_DAILY_SECONDS: '30', CAPTION_BUDGET_FILE: file });
+  const read = async () => (await fetch(f.url + '/metrics', { headers: { Authorization: `Bearer ${token}` } })).text();
+  const metrics = await read();
+  assert.match(metrics, /tandem_caption_budget_available 1/);
+  assert.match(metrics, /tandem_caption_budget_reserved_seconds 15/);
+  assert.match(metrics, /tandem_caption_budget_remaining_seconds 15/);
+  assert.equal(metrics.includes(file), false);
+  fs.writeFileSync(file, 'corrupt');
+  const failed = await read();
+  assert.match(failed, /tandem_caption_budget_available 0/);
+  assert.match(failed, /tandem_caption_budget_remaining_seconds 0/);
+  assert.equal(failed.includes('tandem_caption_budget_reserved_seconds'), false);
+  assert.equal((await fetch(f.url + '/ready')).status, 200);
+});
+
 test('avatar failures never log or return upstream conversation bodies and invalid input makes no provider call', async t => {
   const express = require('express'); const http = require('node:http');
   const { createPoseProxy } = require('../server/poseProxy');

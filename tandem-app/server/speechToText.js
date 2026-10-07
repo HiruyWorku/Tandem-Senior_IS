@@ -6,11 +6,12 @@ const VALID_SAMPLE_RATES = new Set([8000, 16000, 22050, 24000, 32000, 44100, 480
 class SpeechToTextService {
   constructor({ client, setTimer = setTimeout, clearTimer = clearTimeout, now = Date.now,
     languageCode = 'en-US', maxStreams = 20, maxSessionMs = 0, idleMs = 0,
-    telemetry = { record() {}, failure() {} } } = {}) {
+    dailyBudget = null, telemetry = { record() {}, failure() {} } } = {}) {
     if (![maxSessionMs, idleMs].every(value => Number.isInteger(value) && value >= 0 && value <= 2147483647)) {
       throw new Error('Caption time limits must be non-negative integer milliseconds.');
     }
     this.telemetry = telemetry;
+    this.dailyBudget = dailyBudget;
     this.client = client;
     this.setTimer = setTimer;
     this.clearTimer = clearTimer;
@@ -63,6 +64,11 @@ class SpeechToTextService {
     }
 
     let stream;
+    if (this.dailyBudget) {
+      const reservation = this.dailyBudget.open();
+      if (!reservation.ok) { this._limit(socketId, info, reservation.reason); return null; }
+      info.dailyLease = reservation.lease;
+    }
     try {
       this.client ||= new speech.SpeechClient();
       stream = this.client.streamingRecognize({
@@ -124,6 +130,7 @@ class SpeechToTextService {
     });
     for (const entry of replay) {
       if (info.stream !== stream || !stream.writable || stream.writableNeedDrain) { this._dropped(socketId, info); break; }
+      if (!this._chargeAudio(socketId, info, entry.buffer.length / 2 / info.sampleRateHertz * 1000)) break;
       try { stream.write(entry.buffer); this.telemetry.record('speech_replayed'); }
       catch (error) { this._retry(socketId, info, error); break; }
     }
@@ -180,6 +187,7 @@ class SpeechToTextService {
     this._stopLimits(info);
     info.audioHistory = [];
     this.telemetry.record('speech_limited');
+    if (reason === 'daily_budget' || reason === 'budget_unavailable') this.telemetry.record('speech_' + reason);
     // A deliberate caption retry creates a new binding; incoming audio cannot reopen it.
     this._status(socketId, info, { status: 'paused', reason, retryable: true });
   }
@@ -236,6 +244,7 @@ class SpeechToTextService {
     const stream = info.stream;
     // Invalidate first: events from a destroyed stream must not restart it.
     info.stream = null;
+    info.dailyLease = null;
     if (stream && !stream.destroyed) stream.destroy();
   }
 
@@ -282,6 +291,7 @@ class SpeechToTextService {
     if (!info.stream?.writable) return;
     // Do not accumulate delayed audio when the provider applies backpressure.
     if (info.stream.writableNeedDrain) { this._dropped(socketId, info); return; }
+    if (!this._chargeAudio(socketId, info, duration)) return;
     try {
       const entry = { startMs: info.audioMs, endMs: info.audioMs + duration, buffer: Buffer.from(audioBuffer) };
       info.audioMs += duration;
@@ -292,6 +302,14 @@ class SpeechToTextService {
     } catch (error) {
       this._retry(socketId, info, error);
     }
+  }
+
+  _chargeAudio(socketId, info, milliseconds) {
+    if (!this.dailyBudget) return true;
+    const charge = info.dailyLease?.take(milliseconds);
+    if (charge?.ok) return true;
+    this._limit(socketId, info, charge?.reason || 'budget_unavailable');
+    return false;
   }
 
   /** Cancel every timer and invalidate all callbacks on participant departure. */

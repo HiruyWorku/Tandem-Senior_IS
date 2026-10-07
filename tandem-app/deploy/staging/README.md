@@ -95,6 +95,12 @@ This is an application-image release, not a rollback of Compose/source/IAM/secre
 
 The successful release path passed on staging on 2026-10-07, using `tandem-staging-app:release-20261007-deployment-check`. Audit, startup configuration, selected-image verification and readiness passed, followed by HTTPS/private invitation/text/forced TURN checks. The retained prior image is `tandem-staging-app:rollback-18e3f87612eb4ac9ac815201d4ad7c86`. All 71 server tests pass, including six simulated release failure/recovery scenarios.
 
+## Persistent caption allowance (prepared)
+
+The next Compose release defaults CAPTION_DAILY_SECONDS to 3600 (60 aggregate audio minutes per UTC day), configurable in the protected .env; 0 disables. A named caption_budget volume at /app/state retains a mode-600 aggregate ledger across releases/container recreation. The image initializes that directory for the non-root Node user; the rest of the container root remains read-only. Conservative 15-second reservations precede provider audio, counting retries/replay and retaining unused credit. The owner preference question remains pending; no allowance change has been rolled out while the long relay check runs.
+
+Corrupt/unavailable/locked storage refuses new caption credit while video/text continue. Protected allowance gauges support monitoring. Preserve the volume and ledger during rollback; old images do not enforce the cap. Do not remove volumes during maintenance. See [operations](../../../../docs/OPERATIONS.md) for semantics and stale-lock recovery. This application audio allowance does not cap other Google Cloud charges.
+
 ## Approval scope and cost
 
 Owner approved the app VM/disk/IP, scoped identity/IAM, Secret Manager API/secret, app-only network/firewalls and initial deployment. They separately approved migrating the existing TURN server to shared-secret authentication to avoid an additional relay VM. Neither approval authorizes deleting the existing relay.

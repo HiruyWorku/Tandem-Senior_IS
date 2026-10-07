@@ -2,6 +2,10 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { SpeechToTextService } = require('../server/speechToText');
+const { createDailyCaptionBudget } = require('../server/captionBudget');
+const fs = require('node:fs');
+const path = require('node:path');
+const os = require('node:os');
 
 function fixture(options = {}) {
   const streams = [];
@@ -45,6 +49,36 @@ function fixture(options = {}) {
   return { service, streams, requests, timers, emissions, forwarded, socket, send, fire,
     setNow: value => { now = value; } };
 }
+
+test('daily exhaustion stops provider audio and cannot be bypassed by leaving and rebinding', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tandem-speech-budget-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const dailyBudget = createDailyCaptionBudget({ file: path.join(directory, 'ledger'), limitSeconds: 15 });
+  const f = fixture({ dailyBudget });
+  for (let second = 0; second < 16; second++) {
+    f.setNow(second * 1000);
+    f.service.processAudio('peer', { sampleRate: 8000, buffer: Buffer.alloc(16000) });
+  }
+  assert.equal(f.streams.length, 1); assert.equal(f.streams[0].writes.length, 15);
+  assert.equal(f.streams[0].destroyed, true);
+  assert.equal(f.emissions.at(-1)[1].reason, 'daily_budget');
+  assert.equal(f.timers.size, 0);
+  f.service.cleanup('peer'); f.service.bindSocketToStream('peer', f.socket); f.send();
+  assert.equal(f.streams.length, 1); assert.equal(f.emissions.at(-1)[1].reason, 'daily_budget');
+});
+
+test('replayed audio and new requests reserve daily credit before reaching the provider', t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'tandem-replay-budget-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const file = path.join(directory, 'ledger');
+  const f = fixture({ dailyBudget: createDailyCaptionBudget({ file, limitSeconds: 30 }) });
+  f.send(); f.streams[0].emit('error', { code: 14 });
+  f.fire(f.service.recognizeStreams.get('peer').retryTimer);
+  assert.equal(f.streams.length, 2); assert.equal(f.streams[1].writes.length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(file)).reservedMs, 30000);
+  f.streams[1].emit('error', { code: 14 }); f.fire(f.service.recognizeStreams.get('peer').retryTimer);
+  assert.equal(f.streams.length, 2); assert.equal(f.emissions.at(-1)[1].reason, 'daily_budget');
+});
 
 test('recognition starts on audio, using actual sample rate and explicit little-endian PCM', () => {
   const f = fixture();

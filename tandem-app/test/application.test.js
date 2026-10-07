@@ -68,6 +68,13 @@ test('invalid caption capacity and duration configuration fails closed', () => {
     { CAPTION_IDLE_SECONDS: '301' }]) assert.throws(() => createApplication({ env }));
 });
 
+test('daily captions reject unsafe configuration without silently dropping persistence', () => {
+  for (const env of [{ CAPTION_DAILY_SECONDS: 'bad' }, { CAPTION_DAILY_SECONDS: '1', CAPTION_BUDGET_FILE: '/tmp/ledger' },
+    { CAPTION_DAILY_SECONDS: '30' }, { CAPTION_DAILY_SECONDS: '30', CAPTION_BUDGET_FILE: 'relative' }]) {
+    assert.throws(() => createApplication({ env }));
+  }
+});
+
 test('invalid connection capacity and admission timeout fail closed', () => {
   for (const env of [{ MAX_CONNECTIONS: '1' }, { MAX_CONNECTIONS: '10001' },
     { UNJOINED_TIMEOUT_SECONDS: '0' }, { UNJOINED_TIMEOUT_SECONDS: 'NaN' }]) {

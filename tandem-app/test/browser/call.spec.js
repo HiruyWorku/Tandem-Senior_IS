@@ -96,10 +96,12 @@ for (const width of [1440, 390]) {
   test(`permission retry recovers media and captions without losing a draft at ${width}px`, async ({ browser }, testInfo) => {
     const f = await captionApp();
     const pages = await captionPair(browser, f, () => {
-      const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
+      const media = navigator.mediaDevices;
+      Object.defineProperty(navigator, 'mediaDevices', { value: media });
+      const original = media.getUserMedia.bind(media);
       let allowed = false;
       window.allowCallMedia = () => { allowed = true; };
-      Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: constraints => allowed ? original(constraints)
+      Object.defineProperty(media, 'getUserMedia', { value: constraints => allowed ? original(constraints)
         : Promise.reject(new DOMException('Denied', 'NotAllowedError')) });
     });
     try {
@@ -160,8 +162,10 @@ for (const width of [1440, 390]) {
 test('unanswered media permission allows typed calls and late permission release is cleaned up', async ({ browser }) => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
-    const original = navigator.mediaDevices.getUserMedia.bind(navigator.mediaDevices);
-    Object.defineProperty(navigator.mediaDevices, 'getUserMedia', { value: constraints => new Promise(resolve => {
+    const media = navigator.mediaDevices;
+    Object.defineProperty(navigator, 'mediaDevices', { value: media });
+    const original = media.getUserMedia.bind(media);
+    Object.defineProperty(media, 'getUserMedia', { value: constraints => new Promise(resolve => {
       window.releasePermission = async () => {
         window.lateStream = await original(constraints); resolve(window.lateStream);
       };
@@ -171,6 +175,8 @@ test('unanswered media permission allows typed calls and late permission release
   try {
     await a.goto(`${baseURL}/deaf.html?room=PENDINGMEDIA`); await b.goto(`${baseURL}/hearing.html?room=PENDINGMEDIA`);
     await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await expect.poll(() => b.evaluate(() => typeof window.releasePermission)).toBe('function');
+    expect(await b.locator('#localVideo').evaluate(video => video.srcObject)).toBeNull();
     await expect(b.locator('#retryMedia')).toBeDisabled();
     await a.locator('#replyText').fill('Text while permission waits'); await a.locator('#replySend').click();
     await expect(b.getByText('Text while permission waits', { exact: true })).toBeVisible();
@@ -451,7 +457,7 @@ test('optional speech attaches native playback to a confirmed reply without auto
   } finally { await context.close(); await app.close(); }
 });
 
-async function captionApp({ failProvider = false, maxSessionMs = 0, idleMs = 0 } = {}) {
+async function captionApp({ failProvider = false, maxSessionMs = 0, idleMs = 0, dailyBudget = null } = {}) {
   const { EventEmitter } = require('node:events');
   const { SpeechToTextService } = require('../../server/speechToText');
   const records = [];
@@ -470,7 +476,7 @@ async function captionApp({ failProvider = false, maxSessionMs = 0, idleMs = 0 }
     };
     records.push(stream); return stream;
   } };
-  const speech = new SpeechToTextService({ client, maxSessionMs, idleMs });
+  const speech = new SpeechToTextService({ client, maxSessionMs, idleMs, dailyBudget });
   if (failProvider) speech.MAX_FAILURE_MS = 0;
   const app = createApplication({ env: { REQUIRE_ROOM_TOKEN: 'false', ENABLE_SPEECH: 'true' }, speech });
   await new Promise(resolve => app.server.listen(0, '127.0.0.1', resolve));
@@ -489,6 +495,41 @@ async function captionPair(browser, f, script) {
   for (const page of [a, b]) await expect(page.locator('#retryMedia')).toBeEnabled({ timeout: 15000 });
   return { context, a, b, errors };
 }
+
+test('daily caption allowance retains video and text, rejects repeated starts, and recovers on UTC rollover', async ({ browser }) => {
+  const { createDailyCaptionBudget } = require('../../server/captionBudget');
+  const directory = fs.mkdtempSync(path.join(require('node:os').tmpdir(), 'tandem-browser-budget-'));
+  const file = path.join(directory, 'ledger');
+  let now = Date.parse('2026-10-07T23:59:00Z');
+  fs.writeFileSync(file, JSON.stringify({ version: 1, day: '2026-10-07', reservedMs: 15000 }));
+  const f = await captionApp({ dailyBudget: createDailyCaptionBudget({ file, limitSeconds: 15, now: () => now }) });
+  const pages = await captionPair(browser, f);
+  try {
+    for (const page of [pages.a, pages.b]) {
+      if (await page.locator('#captionAction').textContent() === 'Start captions') await page.locator('#captionAction').click();
+      await expect(page.locator('#captionStatus')).toHaveText('Daily caption allowance reached · type a reply');
+      await expect(page.locator('#captionAction')).toHaveText('Check captions');
+    }
+    const tracks = await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id));
+    await pages.b.locator('#captionAction').click();
+    // The old paused label remains while the asynchronous Start acknowledgement
+    // is pending. Wait for the new attempt to finish before moving the clock.
+    await expect(pages.b.locator('#captionAction')).toBeEnabled();
+    await expect(pages.b.locator('#captionAction')).toHaveText('Check captions');
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Daily caption allowance reached · type a reply');
+    expect(f.records.length).toBe(0);
+    await pages.b.locator('#replyText').fill('Text after the daily allowance'); await pages.b.locator('#replySend').click();
+    await expect(pages.a.getByText('Text after the daily allowance', { exact: true })).toBeVisible();
+    now = Date.parse('2026-10-08T00:00:00Z');
+    await pages.b.locator('#captionAction').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+    await expect(pages.a.locator('#peerCaptionStatus')).toHaveText('Peer captions on');
+    expect(f.records.length).toBe(1);
+    expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(tracks);
+    expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live'))).toBe(true);
+    expect(pages.errors).toEqual([]);
+  } finally { await pages.context.close(); await f.app.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+});
 
 test('cached caption call preserves an explicit pause and resumes fresh native capture', async ({ browser }) => {
   const f = await captionApp(); const pages = await captionPair(browser, f);
