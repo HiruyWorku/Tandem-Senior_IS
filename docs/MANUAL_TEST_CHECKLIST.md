@@ -26,6 +26,7 @@ Reload both devices before the batch so they use the current client and connecti
 | M11 | Caption limits: after 15 minutes, use Start captions to continue; also check recovery after mobile interruption. | Recognition pauses with Start captions available; video/text remain usable; deliberate restart works. The 15-second idle cutoff measures missing audio packets, not silence. | Pending |
 | M12 | Evaluation with Deaf/ASL users when available. | Assess whether captions, attribution, typed reply flow and terminology meet the actual communication need. | Pending |
 | M13 | If a connection is temporarily unavailable/busy, keep an unsent draft and wait for recovery; then send. | Retry preserves the current page draft and sends it once the call is ready. Record any stuck state. | Pending |
+| M14 | Open Devices; select another camera/microphone or Browser default and apply. Try unplugging a selected USB device when available. | Device changes preserve text/drafts and mute/camera choices. A failed selection leaves existing tracks usable; missing hardware is labeled and another selection is available. Phone browsers may expose only one input. | Pending |
 
 ## Engineer-verified evidence (does not replace manual checks)
 
@@ -38,6 +39,7 @@ Reload both devices before the batch so they use the current client and connecti
 - Automated Chrome, Firefox and WebKit journeys cover native synthetic video, PCM capture, caption retry/pause, audio-context suspension, private invitations, reconnection and draft retention. This does not replace physical device/background/network checks.
 - Media recovery journeys cover denied/deferred permission, retry in both roles, signing preview, capture restart, retained mute choices, stopped old tracks and discarded late grants after page exit. Expired reconnects stop local capture and keep the draft.
 - Browser audio setup/resume/cleanup deadlines are covered with hung-operation fixtures. Native audio resume recovery keeps live call tracks and typed delivery; physical browser interruptions remain M05.
+- Device selection journeys map test IDs to native synthetic streams, verifying exact constraints, sender replacement, old-track cleanup, mute choices, failed-selection preservation, missing-device labels and discovery timeout/stale-result cleanup. Actual hardware selection/unplugging remains M14.
 - Post-test streams, sockets and rooms returned to zero. Tests use synthetic media, not measured real-user accuracy.
 
 Pause captions or leave after testing to stop paid recognition. Two active microphones count as two audio streams. Experimental ASL/avatar remain disabled; do not interpret these checks as fluent ASL translation validation.

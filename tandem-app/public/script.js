@@ -1,6 +1,7 @@
 import { IceLease } from '/iceLease.mjs';
 import { AudioCapture } from '/audioCapture.js';
 import { invitationToken, invitationHeaders } from '/invitation.js';
+import { DeviceSettings } from '/deviceSettings.js';
 
 // script.js - Shared WebRTC logic for Tandem
 
@@ -110,6 +111,10 @@ let isSettingRemoteAnswerPending = false;
 let recoveryTimer;
 let connectionRetryTimer;
 let pageClosing = false;
+let mediaChoices = { videoId: '', audioId: '' };
+const deviceSettings = new DeviceSettings({ getStream: () => localStream,
+  allowed: () => mediaAccessAllowed && !pageClosing, pending: () => mediaPending,
+  apply: choices => initMedia(choices) });
 function retryConnection() {
   clearTimeout(connectionRetryTimer);
   connectionRetryTimer = setTimeout(() => { if (!pageClosing) socket.connect(); }, 5000 + Math.random() * 2000);
@@ -138,13 +143,14 @@ async function authorizeInvitation(room) {
     if (!response.ok) throw new Error('Connection unavailable. Reload to try again.');
     const capabilities = await response.json();
     window.TandemApp.capabilities = capabilities;
-    if (!capabilities.privateRooms && !invitationToken) { mediaAccessAllowed = true; return true; }
+    if (!capabilities.privateRooms && !invitationToken) { mediaAccessAllowed = true; deviceSettings.update(); return true; }
     const result = await fetch('/api/rooms/validate', {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...invitationHeaders() },
       body: JSON.stringify({ room }), signal: AbortSignal.timeout(10000),
     });
     if (!result.ok) throw new Error('Invitation invalid or expired. Ask your partner for the full invitation link.');
     mediaAccessAllowed = true;
+    deviceSettings.update();
     return true;
   } catch (error) {
     const message = error.message || 'Invitation unavailable. Reload to try again.';
@@ -168,6 +174,7 @@ function showMediaRecovery(message) {
   const panel = document.getElementById('mediaRecovery');
   const label = document.getElementById('mediaStatus');
   if (panel) panel.hidden = false;
+  panel?.closest('.call-sidebar')?.classList.add('media-recovery-visible');
   if (label) label.textContent = message;
   const button = document.getElementById('retryMedia');
   if (button) { button.disabled = mediaPending || !mediaAccessAllowed; button.textContent = mediaPending ? 'Waiting for permission…' : 'Retry camera & microphone'; }
@@ -223,16 +230,19 @@ async function attachCallMedia(stream) {
   }
 }
 
-async function initMedia() {
+async function initMedia(choices = mediaChoices) {
   if (mediaPending || pageClosing || !mediaAccessAllowed) return false;
   mediaPending = true;
+  deviceSettings.update();
   setupMediaControls();
-  showMediaRecovery('Allow camera and microphone access in your browser. Typed replies remain available.');
+  showMediaRecovery(localStream ? 'Opening camera and microphone… Typed replies remain available.' :
+    'Allow camera and microphone access in your browser. Typed replies remain available.');
   let nextStream;
   try {
     nextStream = await navigator.mediaDevices.getUserMedia({
-      video: true,
+      video: choices.videoId ? { deviceId: { exact: choices.videoId } } : true,
       audio: {
+        ...(choices.audioId ? { deviceId: { exact: choices.audioId } } : {}),
         echoCancellation: true,
         noiseSuppression: true,
         autoGainControl: true
@@ -263,6 +273,8 @@ async function initMedia() {
       if (joinedRoom && isMicOn && !captionPaused && captureState === 'running') await setCaptionEnabled(true);
     }
     document.getElementById('mediaRecovery')?.setAttribute('hidden', '');
+    document.querySelector('.call-sidebar')?.classList.remove('media-recovery-visible');
+    mediaChoices = { ...choices };
     return true;
   } catch (error) {
     if (nextStream && localStream !== nextStream) nextStream.getTracks().forEach(track => track.stop());
@@ -270,11 +282,13 @@ async function initMedia() {
       NotAllowedError: 'Camera or microphone access is blocked. Allow access in your browser settings, then retry.',
       NotFoundError: 'No camera or microphone was found. Connect a device, then retry.',
       NotReadableError: 'Your camera or microphone is busy. Close other apps using it, then retry.',
+      OverconstrainedError: 'The selected camera or microphone is unavailable. Open Devices and choose another device.',
     };
     showMediaRecovery(`${reasons[error.name] || 'Camera or microphone unavailable. Check your devices and retry.'} You can still type replies.`);
     return false;
   } finally {
     mediaPending = false;
+    deviceSettings.update();
     updateMediaControls();
     const button = document.getElementById('retryMedia');
     if (button) { button.disabled = !mediaAccessAllowed; button.textContent = 'Retry camera & microphone'; }
@@ -286,10 +300,12 @@ document.getElementById('retryMedia')?.addEventListener('click', () => { initMed
 
 function revokeMediaAccess() {
   mediaAccessAllowed = false;
+  deviceSettings.update();
   localStream?.getTracks().forEach(track => track.stop());
   cleanupAudioProcessing();
   updateMediaControls();
   document.getElementById('mediaRecovery')?.setAttribute('hidden', '');
+  document.querySelector('.call-sidebar')?.classList.remove('media-recovery-visible');
 }
 
 function updateCaptionState() {
@@ -851,6 +867,7 @@ window.addEventListener('online', () => { if (joinedRoom) iceLease.refresh().cat
 
 window.addEventListener('pagehide', () => {
   pageClosing = true;
+  deviceSettings.dispose();
   clearTimeout(connectionRetryTimer);
   iceLease.stop();
   clearTimeout(recoveryTimer);

@@ -1,0 +1,164 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-07T20:40:26.787689+00:00",
+  "title": "Design System: Tandem \u2014 Warm Signal",
+  "extensions": {
+    "colorMeta": {
+      "amber": {
+        "role": "primary",
+        "displayName": "Amber"
+      },
+      "coral": {
+        "role": "secondary",
+        "displayName": "Coral"
+      },
+      "bg": {
+        "role": "neutral",
+        "displayName": "Warm near-black"
+      },
+      "text": {
+        "role": "neutral",
+        "displayName": "Cream text"
+      }
+    },
+    "typographyMeta": {
+      "display": {
+        "displayName": "Call brand",
+        "purpose": "Fraunces call wordmark; larger display sizes exist elsewhere."
+      },
+      "body": {
+        "displayName": "Interface",
+        "purpose": "DM Sans interface copy."
+      },
+      "data": {
+        "displayName": "Room data",
+        "purpose": "Monospaced room code."
+      }
+    },
+    "shadows": [
+      {
+        "name": "shadow-sm",
+        "value": "0 1px 6px rgba(0,0,0,0.55)",
+        "purpose": "Incumbent shadow scale."
+      },
+      {
+        "name": "shadow-md",
+        "value": "0 4px 24px rgba(0,0,0,0.6)",
+        "purpose": "Incumbent shadow scale."
+      },
+      {
+        "name": "shadow-lg",
+        "value": "0 12px 48px rgba(0,0,0,0.7)",
+        "purpose": "Incumbent shadow scale."
+      },
+      {
+        "name": "shadow-xl",
+        "value": "0 24px 80px rgba(0,0,0,0.8)",
+        "purpose": "Incumbent shadow scale."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease",
+        "value": "cubic-bezier(0.32, 0, 0.14, 1)",
+        "purpose": "Incumbent transitions."
+      },
+      {
+        "name": "spring",
+        "value": "cubic-bezier(0.34, 1.56, 0.64, 1)",
+        "purpose": "Incumbent movement."
+      },
+      {
+        "name": "t-xs",
+        "value": "0.08s",
+        "purpose": "Incumbent duration."
+      },
+      {
+        "name": "t-sm",
+        "value": "0.15s",
+        "purpose": "Incumbent duration."
+      },
+      {
+        "name": "t-md",
+        "value": "0.25s",
+        "purpose": "Incumbent duration."
+      },
+      {
+        "name": "t-lg",
+        "value": "0.4s",
+        "purpose": "Incumbent duration."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "mobile-call",
+        "value": "860px"
+      },
+      {
+        "name": "short-desktop",
+        "value": "780px (max-height, min-width: 861px)"
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Devices footer button",
+      "kind": "button",
+      "refersTo": "footer-control",
+      "description": "Icon-over-label footer control opening inline device settings.",
+      "html": "<button class=\"ds-device-toggle\" type=\"button\" aria-expanded=\"false\"><svg viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\" aria-hidden=\"true\"><path d=\"M4 4v6m0 4v6m8-16v10m0 4v2m8-16v2m0 4v10\"/><path d=\"M1 10h6m2 8h6m2-12h6\"/></svg>Devices</button>",
+      "css": ".ds-device-toggle{display:flex;flex-direction:column;align-items:center;gap:3px;padding:9px 16px;min-width:64px;border-radius:var(--r-md);border:1px solid var(--border-2);background:var(--surface);font-family:\"DM Sans\",sans-serif;color:var(--text);font-size:10.5px;font-weight:500;letter-spacing:.02em;cursor:pointer;transition:all var(--t-xs) var(--ease)}.ds-device-toggle svg{width:17px;height:17px}.ds-device-toggle:hover{background:var(--surface-2);border-color:var(--border-3);transform:translateY(-1px)}.ds-device-toggle:active{transform:scale(.96)}.ds-device-toggle:disabled{opacity:.45;cursor:not-allowed}"
+    },
+    {
+      "name": "Device action",
+      "kind": "button",
+      "refersTo": "device-action",
+      "description": "Use selected devices and Close share this neutral action treatment.",
+      "html": "<button class=\"ds-device-action\" type=\"button\">Use selected devices</button>",
+      "css": ".ds-device-action{font-family:\"DM Sans\",system-ui,sans-serif; color:var(--text);font-size:14px;padding:6px 10px;min-height:44px;border:1px solid var(--border-3);border-radius:var(--r-sm);background:var(--surface);cursor:pointer}.ds-device-action:hover{background:var(--surface-2)}.ds-device-action:focus-visible{outline:2px solid var(--amber);outline-offset:3px;}.ds-device-action:disabled{opacity:.55;cursor:wait}"
+    },
+    {
+      "name": "Camera select",
+      "kind": "input",
+      "refersTo": "device-select",
+      "description": "Labelled native dark select, with browser-default option.",
+      "html": "<label class=\"ds-device-label\" for=\"ds-camera\">Camera</label><select class=\"ds-device-select\" id=\"ds-camera\"><option>Browser default</option></select>",
+      "css": ".ds-device-label{display:block;font-family:\"DM Sans\",system-ui,sans-serif; color:var(--text);font-size:1rem;font-weight:500;margin-bottom:8px}.ds-device-select{font-family:\"DM Sans\",system-ui,sans-serif; color:var(--text);width:100%;min-width:0;min-height:44px;padding:8px;border:1px solid var(--border-3);border-radius:var(--r-sm);background:var(--bg);font-size:1rem;color-scheme:dark}.ds-device-select:focus-visible{outline:2px solid var(--amber);outline-offset:3px;}.ds-device-select:disabled{opacity:.55}"
+    },
+    {
+      "name": "Reply field",
+      "kind": "input",
+      "description": "Existing multiline reply field beside device settings.",
+      "html": "<label class=\"ds-reply-label\" for=\"ds-reply\">Your reply</label><textarea class=\"ds-reply-field\" id=\"ds-reply\" placeholder=\"Type your reply...\"></textarea>",
+      "css": ".ds-reply-label{display:block;font-family:\"DM Sans\",system-ui,sans-serif; color:var(--text);font-size:14px;font-weight:500;margin-bottom:8px}.ds-reply-field{font-family:\"DM Sans\",system-ui,sans-serif; color:var(--text);width:100%;min-height:76px;max-height:200px;resize:vertical;padding:10px;border:1px solid var(--border-3);border-radius:var(--r-sm);background:var(--bg);font-size:16px;caret-color:var(--amber)}.ds-reply-field:focus-visible{outline:2px solid var(--amber);outline-offset:3px;}.ds-reply-field::placeholder{color:var(--text-2)}"
+    },
+    {
+      "name": "Send reply",
+      "kind": "button",
+      "refersTo": "reply-submit",
+      "description": "Existing amber explicit reply submission.",
+      "html": "<button class=\"ds-send-reply\" type=\"button\">Send reply</button>",
+      "css": ".ds-send-reply{font-family:\"DM Sans\",system-ui,sans-serif;font-size:14px;min-height:44px;padding:8px 14px;border:0;border-radius:var(--r-sm);color:var(--bg);background:var(--amber);font-weight:600;cursor:pointer}.ds-send-reply:focus-visible{outline:2px solid var(--amber);outline-offset:3px;}.ds-send-reply:disabled{background:var(--surface-3);color:var(--text-2);cursor:not-allowed}.ds-send-reply:hover:enabled{background:#f4bb67}"
+    }
+  ],
+  "narrative": {
+    "northStar": "Warm Signal",
+    "overview": "Warm Signal is the incumbent identity named in the stylesheet: warm dark surfaces, amber and coral accents, Fraunces branding, and DM Sans interface text. This document records the built call surfaces and their device selector; it does not propose a replacement identity.",
+    "keyCharacteristics": [
+      "Warm tonal layers with restrained borders.",
+      "Serif branding paired with plain interface labels.",
+      "Inline device settings that preserve conversation and call controls."
+    ],
+    "rules": [],
+    "dos": [
+      "Do reuse the existing warm surfaces, amber focus outline, and font roles.",
+      "Do keep Camera and Microphone labels, native selects, and explicit Use selected devices submission.",
+      "Do preserve access to reply, Send, and Leave when settings are open."
+    ],
+    "donts": [
+      "Don't persist device identifiers beyond the current page.",
+      "Don't turn the inline selector into a modal or silently apply selection changes.",
+      "Don't treat this scoped review as whole-app contrast certification or release approval."
+    ]
+  }
+}

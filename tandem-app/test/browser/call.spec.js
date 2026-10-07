@@ -180,6 +180,125 @@ test('unanswered media permission allows typed calls and late permission release
   } finally { await context.close(); }
 });
 
+for (const width of [1440, 390]) {
+  test(`device selection replaces native call tracks and preserves drafts and mute choices at ${width}px`, async ({ browser }, testInfo) => {
+    const f = await captionApp();
+    const pages = await captionPair(browser, f, () => {
+      const media = navigator.mediaDevices;
+      // Keep the fixture on one native wrapper; WebKit may recreate the wrapper
+      // between property reads during early document initialization.
+      Object.defineProperty(navigator, 'mediaDevices', { value: media });
+      const nativeMedia = media.getUserMedia.bind(media);
+      window.testDevices = [
+        { kind: 'videoinput', deviceId: 'desk-camera', label: 'Desk camera <img src=x>' },
+        { kind: 'videoinput', deviceId: 'missing-camera', label: 'Disconnected camera' },
+        { kind: 'audioinput', deviceId: 'desk-mic', label: 'Desk microphone' },
+      ];
+      Object.defineProperty(media, 'enumerateDevices', { value: async () => window.testDevices });
+      Object.defineProperty(media, 'getUserMedia', { value: constraints => {
+        window.requestedDevices = constraints;
+        if (constraints.video?.deviceId?.exact === 'missing-camera') return Promise.reject(new DOMException('Missing', 'OverconstrainedError'));
+        // Exercise real native streams and replacement; virtual test device IDs
+        // are mapped to the browser's synthetic hardware after checking constraints.
+        const audio = { ...constraints.audio }; delete audio.deviceId;
+        return nativeMedia({ video: true, audio });
+      } });
+    });
+    try {
+      await pages.b.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      await expect(pages.b.locator('#mediaRecovery')).toBeHidden();
+      await pages.b.locator('#replyText').fill('Draft stays while changing devices');
+      await pages.b.locator('#toggleMic').click(); await pages.b.locator('#toggleCamera').click();
+      const socket = await pages.b.evaluate(() => window.socket.id);
+      await pages.b.evaluate(() => { window.beforeDevices = document.querySelector('#localVideo').srcObject.getTracks(); });
+      await pages.b.locator('#toggleDevices').click();
+      await expect(pages.b.locator('#deviceSettings')).toBeVisible();
+      await expect(pages.b.locator('#applyDevices')).toBeEnabled();
+      await pages.b.locator('#cameraDevice').selectOption('desk-camera');
+      await pages.b.locator('#microphoneDevice').selectOption('desk-mic');
+      await expect(pages.b.locator('#deviceSettings img')).toHaveCount(0);
+      await pages.b.locator('#applyDevices').click();
+      await expect(pages.b.locator('#deviceStatus')).toHaveText('Your selected devices are in use.');
+      expect(await pages.b.evaluate(() => ({ video: window.requestedDevices.video.deviceId.exact,
+        audio: window.requestedDevices.audio.deviceId.exact }))).toEqual({ video: 'desk-camera', audio: 'desk-mic' });
+      expect(await pages.b.evaluate(() => window.beforeDevices.every(track => track.readyState === 'ended'))).toBe(true);
+      expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live' && !track.enabled))).toBe(true);
+      expect(await pages.b.evaluate(() => window.socket.id)).toBe(socket);
+      await expect(pages.b.locator('#replyText')).toHaveValue('Draft stays while changing devices');
+      await pages.b.evaluate(() => { window.afterDevices = document.querySelector('#localVideo').srcObject; });
+      await pages.b.locator('#cameraDevice').selectOption('missing-camera');
+      await pages.b.locator('#applyDevices').click();
+      await expect(pages.b.locator('#mediaStatus')).toContainText('selected camera or microphone is unavailable');
+      expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject === window.afterDevices &&
+        video.srcObject.getTracks().every(track => track.readyState === 'live'))).toBe(true);
+      await pages.b.locator('#replySend').click();
+      await expect(pages.a.getByText('Draft stays while changing devices', { exact: true })).toBeVisible();
+      await pages.b.evaluate(() => {
+        window.testDevices = window.testDevices.filter(device => device.deviceId !== 'missing-camera');
+        navigator.mediaDevices.dispatchEvent(new Event('devicechange'));
+      });
+      await expect(pages.b.locator('#cameraDevice option:checked')).toHaveText('Selected device unavailable');
+      await pages.b.locator('#cameraDevice').selectOption('');
+      await pages.b.locator('#microphoneDevice').selectOption('');
+      await pages.b.locator('#applyDevices').click();
+      await expect(pages.b.locator('#mediaRecovery')).toBeHidden();
+      await expect(pages.b.locator('#deviceStatus')).toHaveText('Your selected devices are in use.');
+      await pages.b.locator('#toggleMic').click(); await pages.b.locator('#toggleCamera').click();
+      if (await pages.b.locator('#captionAction').textContent() !== 'Pause captions') await pages.b.locator('#captionAction').click();
+      await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+      await expect.poll(() => pages.a.locator('#remoteVideo').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+      expect(await pages.b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await pages.b.evaluate(async () => {
+        window.scrollTo(0, 0);
+        await Promise.all([...document.querySelectorAll('video')].map(video => new Promise(resolve => {
+          video.requestVideoFrameCallback(() => video.requestVideoFrameCallback(resolve));
+        })));
+      });
+      await pages.b.screenshot({ path: testInfo.outputPath('devices.png'), fullPage: true });
+      if (testInfo.project.name !== 'firefox' && testInfo.project.name !== 'webkit') {
+        const directory = path.resolve(__dirname, '../../../.impeccable/review'); fs.mkdirSync(directory, { recursive: true });
+        await pages.b.screenshot({ path: path.join(directory, `devices-${width === 390 ? 'mobile' : 'desktop'}.png`), fullPage: true });
+      }
+      await pages.b.locator('#microphoneDevice').press('Escape');
+      await expect(pages.b.locator('#deviceSettings')).toBeHidden();
+      await expect(pages.b.locator('#toggleDevices')).toBeFocused();
+      await pages.a.locator('#toggleDevices').click(); await expect(pages.a.locator('#deviceSettings')).toBeVisible();
+      await pages.a.locator('#closeDevices').click();
+      expect(pages.errors).toEqual([]);
+    } finally { await pages.context.close(); await f.app.close(); }
+  });
+}
+
+test('device discovery timeout keeps text usable and stale discovery cannot replace a reopened list', async ({ browser }) => {
+  const context = await browser.newContext();
+  await context.addInitScript(() => {
+    const media = navigator.mediaDevices;
+    Object.defineProperty(navigator, 'mediaDevices', { value: media });
+    let calls = 0;
+    Object.defineProperty(media, 'enumerateDevices', { value: () => {
+      calls++;
+      if (calls === 1) return new Promise(resolve => { window.finishDiscovery = () => resolve([{ kind: 'videoinput', deviceId: 'stale', label: 'Old discovery' }]); });
+      return Promise.resolve([{ kind: 'videoinput', deviceId: 'fresh', label: 'Current camera' }]);
+    } });
+  });
+  const a = await context.newPage(); const b = await context.newPage();
+  try {
+    await a.goto(`${baseURL}/deaf.html?room=DEVICELIST`); await b.goto(`${baseURL}/hearing.html?room=DEVICELIST`);
+    await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await a.locator('#toggleDevices').click();
+    await expect(a.locator('#applyDevices')).toBeDisabled();
+    await a.locator('#replyText').fill('Text while devices are unavailable'); await a.locator('#replySend').click();
+    await expect(b.getByText('Text while devices are unavailable', { exact: true })).toBeVisible();
+    await expect(a.locator('#deviceStatus')).toContainText('Device list unavailable', { timeout: 8000 });
+    await expect(a.locator('#applyDevices')).toBeEnabled();
+    await a.locator('#closeDevices').click(); await a.locator('#toggleDevices').click();
+    await expect(a.locator('#cameraDevice option[value="fresh"]')).toHaveCount(1);
+    await a.evaluate(() => window.finishDiscovery());
+    await expect(a.locator('#cameraDevice option[value="fresh"]')).toHaveCount(1);
+    await expect(a.locator('#cameraDevice option[value="stale"]')).toHaveCount(0);
+  } finally { await context.close(); }
+});
+
 test('peer departure preserves drafts; a replacement peer can connect', async ({ browser }) => {
   const f = await pair(browser);
   try {
@@ -289,6 +408,9 @@ async function captionPair(browser, f, script) {
   const errors = []; a.on('pageerror', error => errors.push(error.message)); b.on('pageerror', error => errors.push(error.message));
   await a.goto(`${f.url}/deaf.html?room=CAPTIONS`); await b.goto(`${f.url}/hearing.html?room=CAPTIONS`);
   await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+  // Admission deliberately precedes permission/capture setup. Wait for that
+  // operation to settle before deciding whether audio needs a user gesture.
+  for (const page of [a, b]) await expect(page.locator('#retryMedia')).toBeEnabled({ timeout: 15000 });
   return { context, a, b, errors };
 }
 

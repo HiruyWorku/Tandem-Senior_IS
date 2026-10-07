@@ -73,6 +73,21 @@
     <!-- Sidebar: ASL interpretation -->
     <aside class="call-sidebar">
 
+      <section id="deviceSettings" class="sidebar-panel device-settings" aria-labelledby="deviceSettingsTitle" hidden>
+        <div class="device-settings-head">
+          <h2 id="deviceSettingsTitle" tabindex="-1">Camera &amp; microphone</h2>
+          <button id="closeDevices" class="caption-action" type="button">Close</button>
+        </div>
+        <form id="deviceForm">
+          <label for="cameraDevice">Camera</label>
+          <select id="cameraDevice"><option value="">Browser default</option></select>
+          <label for="microphoneDevice">Microphone</label>
+          <select id="microphoneDevice"><option value="">Browser default</option></select>
+          <button id="applyDevices" class="caption-action" type="submit">Use selected devices</button>
+          <p id="deviceStatus" role="status">Choose your camera and microphone.</p>
+        </form>
+      </section>
+
       <section id="mediaRecovery" class="sidebar-panel media-recovery" aria-label="Camera and microphone" hidden>
         <p id="mediaStatus" role="status"></p>
         <button id="retryMedia" class="caption-action" type="button">Retry camera &amp; microphone</button>
@@ -138,6 +153,14 @@
         Camera
       </button>
       <button id="toggleSpeaker" class="ctrl-btn" type="button" aria-pressed="false" aria-label="Turn on peer audio">Peer audio off</button>
+      <button id="toggleDevices" class="ctrl-btn" type="button" aria-expanded="false" aria-controls="deviceSettings" disabled>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M4 4v6m0 4v6m8-16v10m0 4v2m8-16v2m0 4v10"/>
+          <path d="M1 10h6m2 8h6m2-12h6"/>
+        </svg>
+        Devices
+      </button>
+
     </div>
 
     <div class="ctrl-divider"></div>
