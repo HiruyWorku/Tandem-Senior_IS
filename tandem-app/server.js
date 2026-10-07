@@ -2,6 +2,7 @@ const path = require('node:path');
 const http = require('node:http');
 const { randomUUID } = require('node:crypto');
 const express = require('express');
+const proxyaddr = require('proxy-addr');
 const { Server } = require('socket.io');
 const { registerCallProtocol } = require('./server/callProtocol');
 const { createAccess, createRateLimit, positiveInteger } = require('./server/access');
@@ -30,19 +31,32 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
   const server = http.createServer(app);
   const maxConnections = positiveInteger(env.MAX_CONNECTIONS, 100, 2, 10000);
   const unjoinedTimeoutMs = positiveInteger(env.UNJOINED_TIMEOUT_SECONDS, 30, 5, 300) * 1000;
-  const connectionRate = createRateLimit({ limit: 60, interval: 60000 });
+  const connectionRate = createRateLimit({ limit: positiveInteger(env.MAX_HANDSHAKES_PER_MINUTE, 60, 1, 1000), interval: 60000 });
   const io = new Server(server, {
     serveClient: true, pingTimeout: 20000, pingInterval: 10000,
     maxHttpBufferSize: 128 * 1024,
     allowRequest: (request, callback) => {
       const allowed = !draining && io.engine.clientsCount < maxConnections &&
-        access.originAllowed(request) && connectionRate(request.socket.remoteAddress);
+        access.originAllowed(request) && connectionRate(proxyaddr(request, app.get('trust proxy fn')));
       if (!allowed) telemetry.record('connection_rejected');
       callback(null, allowed);
     },
     // Enforce our transport deadline before Socket.IO begins a graceful polling close.
     connectTimeout: unjoinedTimeoutMs + 1000,
     transports: ['websocket', 'polling'],
+  });
+  io.use((socket, next) => {
+    if (!access.required) return next();
+    const invitation = access.verify(socket.handshake.auth?.token);
+    if (invitation) { socket.data.invitationRoom = invitation.room; return next(); }
+    telemetry.record('connection_rejected');
+    const error = new Error('Invitation invalid or expired. Ask your partner for a new link.');
+    error.data = { code: 'invalid_invitation' };
+    next(error);
+    // Allow the rejection packet to reach polling/WebSocket clients, then reclaim the transport.
+    const timer = setTimeout(() => socket.conn.close(true), 1000);
+    timer.unref?.();
+    socket.conn.once('close', () => clearTimeout(timer));
   });
   io.use(createConnectionAdmission({ maxConnections, unjoinedTimeoutMs, isDraining: () => draining, telemetry }));
   closeUnadmittedTransports(io, { unjoinedTimeoutMs, telemetry });
@@ -54,7 +68,9 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
     maxStreams, maxSessionMs, idleMs, telemetry });
   interpretLetters ||= letters => require('./server/claudeService').interpretLetters(letters);
   synthesize ||= text => require('./server/textToSpeech').synthesize(text);
-  const protocol = registerCallProtocol(io, { telemetry, speech, interpretLetters, synthesize, capabilities, authorizeRoom: (data) => !access.required || Boolean(access.verify(data.token, data.room)) });
+  const protocol = registerCallProtocol(io, { telemetry, speech, interpretLetters, synthesize, capabilities,
+    authorizeRoom: (data, socket) => !access.required ||
+      (socket.data.invitationRoom === data.room && Boolean(access.verify(data.token, data.room))) });
   app.disable('x-powered-by');
   app.use((_req, res, next) => {
     const started = performance.now();

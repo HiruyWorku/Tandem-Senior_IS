@@ -72,7 +72,7 @@ function registerCallProtocol(io, { speech, interpretLetters, synthesize, capabi
           reject('join', 'invalid_role');
           return reply(ack, { ok: false, code: 'invalid_role' });
         }
-        if (!authorizeRoom(data)) {
+        if (!authorizeRoom(data, socket)) {
           telemetry.record('room_rejected');
           reject('join', 'invalid_invitation');
           return reply(ack, { ok: false, code: 'invalid_invitation' });

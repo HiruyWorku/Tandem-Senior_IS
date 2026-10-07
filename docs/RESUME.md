@@ -69,3 +69,13 @@ All 71 server tests pass, including six Python release scenarios using simulated
 Actual staging release succeeded: `tandem-staging-app:release-20261007-deployment-check`; preserved rollback image `tandem-staging-app:rollback-18e3f87612eb4ac9ac815201d4ad7c86`. Candidate audit/startup validation, selected-image verification and readiness passed. Both existing VMs remain running; no new infrastructure was added.
 
 Post-release HTTPS/private invitation/typed reply/forced TURN delivery smoke checks passed. The source archive was checked to exclude runtime `.env`, `runtime.env`, Python caches and bytecode. Evening owner checklist is unchanged.
+
+## 2026-10-07: authenticated socket admission
+
+Private Socket.IO connections now supply the fragment invitation through `auth.token`, verify it before namespace capacity reservation, and bind the socket to that invitation's room. Joining independently rechecks room and expiry. Invalid credentials receive a terminal error; rejected underlying transports close within one second. Reconnect rejection retains the draft and closes the old peer connection. Socket handshake quotas now follow the same configured proxy trust as HTTP requests; forwarded-header spoofing and caller separation are covered with zero/one trusted hops.
+
+All 74 server tests and 24 Chrome journeys passed, followed by both scoped desktop/mobile expired-reconnect checks after cleanup refinement. Prior release CI passed: https://github.com/HiruyWorku/Tandem-Senior_IS/actions/runs/37660451090.
+
+Deployed `tandem-staging-app:release-20261007-socket-auth`; retained prior image as `tandem-staging-app:rollback-68876f9e60544bc98326d67ed893d196`. Fresh audit, candidate startup, selected image and readiness passed. Public checks passed for anonymous socket rejection, private invitation/text, forced TURN, short real Google final captions/pause, and authenticated 20-client admission/overflow/unjoined cleanup/replacement. Aggregate metrics returned to zero sockets, rooms and recognizers, with one recognition start and no provider retry/unavailable event. Both VMs remain running; no infrastructure was added.
+
+The owner explicitly requested continued development through the remaining release work. Firefox/WebKit automation and an hour-long real TURN credential-renewal check are next independent verification tasks. Real-device and user-evaluation gates remain accumulated in the manual checklist.

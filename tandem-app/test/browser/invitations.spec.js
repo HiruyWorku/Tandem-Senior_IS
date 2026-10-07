@@ -131,3 +131,32 @@ test('failed invitation creation can recover without enabling invalid role links
     expect(f.errors).toEqual([]);
   } finally { await f.close(); }
 });
+
+for (const width of [1440, 390]) {
+  test(`expired reconnect stops retrying and retains the draft at ${width}px`, async ({ browser }, testInfo) => {
+    const f = await fixture(browser);
+    try {
+      const landing = await f.context.newPage(); await landing.goto(f.url);
+      await expect(landing.locator('#copyLinkBtn')).toBeEnabled();
+      const a = await f.context.newPage(); const b = await f.context.newPage();
+      await a.goto(await landing.locator('#deafLink').getAttribute('href'));
+      await b.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      await b.goto(await landing.locator('#hearingLink').getAttribute('href'));
+      await expect(b.locator('#replyStatus')).toHaveText('Ready to send.');
+      await b.locator('#replyText').fill('Keep my reply after invitation expiry');
+      const room = new URL(landing.url()).searchParams.get('room');
+      const body = Buffer.from(JSON.stringify({ v: 1, room, exp: Math.floor(Date.now() / 1000) - 1 })).toString('base64url');
+      const token = `${body}.${createHmac('sha256', signingSecret).update(body).digest('base64url')}`;
+      await b.evaluate(token => { window.socket.auth.token = token; window.socket.io.engine.close(); }, token);
+      await expect(b.locator('#status-text')).toHaveText('Invitation invalid or expired. Ask your partner for a new link.');
+      await expect(b.locator('#replyStatus')).toHaveText('Invitation invalid or expired. Ask your partner for a new link.');
+      await expect(b.locator('#replyText')).toHaveValue('Keep my reply after invitation expiry');
+      await expect(b.locator('#replySend')).toBeDisabled();
+      expect(await b.evaluate(() => window.socket.connected || window.socket.active)).toBe(false);
+      expect(await b.locator('#remoteVideo').evaluate(video => video.srcObject)).toBeNull();
+      await b.screenshot({ path: testInfo.outputPath('expired-reconnect.png'), fullPage: true });
+      expect(await b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      expect(f.errors).toEqual([]);
+    } finally { await f.close(); }
+  });
+}

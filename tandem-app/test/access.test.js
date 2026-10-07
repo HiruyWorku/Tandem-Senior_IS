@@ -78,8 +78,8 @@ async function fixture(t, env = {}) {
   const url = `http://127.0.0.1:${application.server.address().port}`;
   const clients = [];
   t.after(async () => { clients.forEach(socket => socket.disconnect()); await application.close(); });
-  return { ...application, url, client: async (origin) => {
-    const socket = connect(url, { transports: ['websocket'], reconnection: false, extraHeaders: origin ? { Origin: origin } : {} });
+  return { ...application, url, client: async (origin, options = {}) => {
+    const socket = connect(url, { transports: ['websocket'], reconnection: false, extraHeaders: origin ? { Origin: origin } : {}, ...options });
     clients.push(socket);
     await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
     return socket;
@@ -88,15 +88,49 @@ async function fixture(t, env = {}) {
 const ack = (socket, data) => new Promise((resolve, reject) => socket.timeout(2000).emit('join', data, (error, result) => error ? reject(error) : resolve(result)));
 const mint = async url => (await fetch(`${url}/api/rooms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json();
 
+test('socket authentication rejects invalid credentials before reservation and releases rejected transports', async t => {
+  const f = await fixture(t, { ROOM_SIGNING_SECRET: secret });
+  const expired = createAccess({ ROOM_SIGNING_SECRET: secret, ROOM_TTL_SECONDS: '300' }, () => Date.now() - 600000).mint();
+  for (const token of [undefined, 'invalid', expired.token, {}]) {
+    await assert.rejects(f.client(undefined, { auth: { token } }), error => error.data?.code === 'invalid_invitation');
+    assert.equal(f.io.sockets.sockets.size, 0);
+  }
+  await new Promise(resolve => setTimeout(resolve, 1100));
+  assert.equal(f.io.engine.clientsCount, 0);
+  const invite = await mint(f.url);
+  const a = await f.client(undefined, { auth: { token: invite.token } });
+  assert.equal((await ack(a, { ...invite, userType: 'deaf' })).ok, true);
+});
+
+test('untrusted forwarding headers cannot split direct-client handshake quota', async t => {
+  const f = await fixture(t, { REQUIRE_ROOM_TOKEN: 'false', MAX_HANDSHAKES_PER_MINUTE: '2' });
+  for (const address of ['203.0.113.10', '203.0.113.11']) {
+    const client = await f.client(undefined, { extraHeaders: { 'X-Forwarded-For': address } }); client.disconnect();
+  }
+  await assert.rejects(f.client(undefined, { extraHeaders: { 'X-Forwarded-For': '203.0.113.12' } }));
+});
+
+test('trusted proxy handshake quotas separate callers and ignore forged leftmost addresses', async t => {
+  const f = await fixture(t, { REQUIRE_ROOM_TOKEN: 'false', TRUST_PROXY_HOPS: '1', MAX_HANDSHAKES_PER_MINUTE: '2' });
+  for (const spoof of ['198.51.100.1', '198.51.100.2']) {
+    const client = await f.client(undefined, { extraHeaders: { 'X-Forwarded-For': `${spoof}, 203.0.113.10` } }); client.disconnect();
+  }
+  await assert.rejects(f.client(undefined, { extraHeaders: { 'X-Forwarded-For': '198.51.100.3, 203.0.113.10' } }));
+  const other = await f.client(undefined, { extraHeaders: { 'X-Forwarded-For': '203.0.113.11' } });
+  assert.equal(other.connected, true);
+});
+
 test('actual server rejects room-code-only access and scopes invitations to one room', async t => {
   const f = await fixture(t);
-  const invite = await mint(f.url); const a = await f.client(); const b = await f.client();
+  const invite = await mint(f.url); const a = await f.client(undefined, { auth: { token: invite.token } }); const b = await f.client(undefined, { auth: { token: invite.token } });
   assert.equal((await ack(a, { room: invite.room, userType: 'hearing' })).code, 'invalid_invitation');
   assert.equal(f.io.sockets.adapter.rooms.has(`call:${invite.room}`), false);
   assert.equal((await ack(a, { room: 'OTHER', userType: 'hearing', token: invite.token })).code, 'invalid_invitation');
   assert.equal((await ack(a, { ...invite, userType: 'hearing' })).ok, true);
   assert.equal((await ack(b, { ...invite, userType: 'deaf' })).ok, true);
-  const c = await f.client(); assert.equal((await ack(c, { ...invite, userType: 'deaf' })).code, 'room_full');
+  const other = await mint(f.url);
+  assert.equal((await ack(a, { ...other, userType: 'hearing' })).code, 'invalid_invitation');
+  const c = await f.client(undefined, { auth: { token: invite.token } }); assert.equal((await ack(c, { ...invite, userType: 'deaf' })).code, 'room_full');
 });
 
 test('protected ICE and provider endpoints require valid bearer credentials without caching', async t => {

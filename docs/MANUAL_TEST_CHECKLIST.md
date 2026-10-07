@@ -2,6 +2,8 @@
 
 Keep adding to this checklist during engineering. Run pending items together when the owner is ready; do not interrupt development to request each check individually. Record device, browser, network and result without pasting private invitations or conversation content.
 
+Reload both devices before the batch so they use the current client and connection authentication.
+
 ## Already reported
 
 - [x] Laptop and phone connected across Wi-Fi and cellular.

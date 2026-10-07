@@ -1,5 +1,6 @@
 const assert = require('node:assert/strict');
 const { chromium } = require('@playwright/test');
+const { io } = require('socket.io-client');
 
 async function main() {
   const origin = new URL(process.argv[2]).origin;
@@ -9,6 +10,12 @@ async function main() {
   }
   assert.equal((await fetch(origin + '/metrics')).status, 404);
   assert.equal((await fetch(origin + '/ice-config')).status, 403);
+  const anonymous = io(origin, { transports: ['websocket'], reconnection: false, timeout: 10000 });
+  try {
+    await assert.rejects(new Promise((resolve, reject) => {
+      anonymous.once('connect', resolve); anonymous.once('connect_error', reject);
+    }), error => error.data?.code === 'invalid_invitation');
+  } finally { anonymous.disconnect(); }
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
   try {
     const context = await browser.newContext();

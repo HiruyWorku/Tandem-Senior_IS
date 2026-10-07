@@ -10,6 +10,8 @@ The app is isolated from the legacy default network in VPC `tandem-staging`, sub
 
 ## Configuration
 
+Private Socket.IO clients must provide the signed invitation as `auth.token` when connecting, then send the same invitation with the room join. Invitations are carried in the link fragment and protocol payloads, never URL query credentials. Connections without a valid invitation are rejected before namespace admission and their transports are reclaimed. A socket cannot use another invitation to switch rooms. Existing browser pages must reload after the socket-authentication rollout. Expired reconnects retain the local draft and require a new invitation.
+
 On the app VM, copy `.env.example` to `.env` and replace APP_HOST with the new app IPv4-derived temporary staging hostname, for example `tandem-<new-ip-with-hyphens>.sslip.io`. Verify public DNS resolution, certificate issuance and browser secure-context access before enabling calls. Third-party wildcard DNS is a temporary staging dependency, not a production domain ownership mechanism. Use a real owned domain before public release.
 
 `refresh-runtime.py` retrieves the combined `tandem-staging-runtime` secret via the attached VM identity and atomically replaces owner-only `runtime.env`. The dedicated tandem-staging service account has secretAccessor on that secret only and project-level Cloud Speech Client for caption testing, with no downloaded key. `tandem-staging.service` fetches the secret before startup and starts healthy containers. To apply a new secret version, restart that service; changing a TURN secret also requires coordinated coturn rotation. Docker restart policies restore containers after process failure; systemd is enabled for boot. Secrets are never printed by the scripts.

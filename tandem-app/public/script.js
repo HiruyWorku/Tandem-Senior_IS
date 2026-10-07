@@ -407,7 +407,7 @@ async function checkServerInstance() {
 }
 
 function initSocket(userType, roomCode) {
-  socket = io();
+  socket = io({ auth: { token: invitationToken } });
   window.socket = socket;
   window.dispatchEvent(new CustomEvent('tandem:socket', { detail: socket }));
   socket.on('captionStatus', data => {
@@ -433,7 +433,14 @@ function initSocket(userType, roomCode) {
   socket.on('connect_error', error => {
     clearTimeout(connectionRetryTimer);
     if (pageClosing) return;
-    if (error.data?.code === 'server_busy') {
+    if (error.data?.code === 'invalid_invitation') {
+      setStatus('Invitation invalid or expired. Ask your partner for a new link.', 'error');
+      joinedRoom = false; syncCapture();
+      pc?.close();
+      if (remoteVideo) remoteVideo.srcObject = null;
+      const reply = document.getElementById('replyStatus');
+      if (reply) reply.textContent = 'Invitation invalid or expired. Ask your partner for a new link.';
+    } else if (error.data?.code === 'server_busy') {
       setStatus('Calls are busy. Retrying… Your draft is saved here.');
       // Namespace rejection stops Socket.IO's built-in reconnect; retry without losing the page draft.
       retryConnection();

@@ -11,7 +11,7 @@ async function main() {
   const invitation = await response.json();
   const clients = [];
   const connect = async () => {
-    const socket = io(origin, { transports: ['websocket'], reconnection: false, timeout: 10000 });
+    const socket = io(origin, { auth: { token: invitation.token }, transports: ['websocket'], reconnection: false, timeout: 10000 });
     clients.push(socket);
     await new Promise((resolve, reject) => { socket.once('connect', resolve); socket.once('connect_error', reject); });
     return socket;
