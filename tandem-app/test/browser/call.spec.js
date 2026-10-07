@@ -307,6 +307,33 @@ test('worklet setup failure can retry while shared camera/microphone tracks stay
   } finally { await pages.context.close(); await f.app.close(); }
 });
 
+test('browser audio suspension pauses the recognizer and deliberate resume keeps call tracks', async ({ browser }) => {
+  const f = await captionApp();
+  const pages = await captionPair(browser, f, () => {
+    window.captureContexts = [];
+    const Constructor = window.AudioContext || window.webkitAudioContext;
+    window.AudioContext = new Proxy(Constructor, { construct(target, args) {
+      const context = Reflect.construct(target, args); window.captureContexts.push(context); return context;
+    } });
+  });
+  try {
+    if (await pages.b.locator('#captionAction').textContent() === 'Start captions') await pages.b.locator('#captionAction').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+    await expect(pages.a.locator('#peerCaptionStatus')).toHaveText('Peer captions on');
+    const before = await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id));
+    await pages.b.evaluate(() => window.captureContexts.at(-1).suspend());
+    await expect(pages.b.locator('#captionAction')).toHaveText('Start captions');
+    await expect(pages.a.locator('#peerCaptionStatus')).toHaveText('Peer captions paused');
+    expect(f.records.some(stream => stream.destroyed)).toBe(true);
+    await pages.b.locator('#captionAction').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+    await expect(pages.a.locator('#peerCaptionStatus')).toHaveText('Peer captions on');
+    expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(before);
+    expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live'))).toBe(true);
+    expect(pages.errors).toEqual([]);
+  } finally { await pages.context.close(); await f.app.close(); }
+});
+
 test('a third browser receives an actionable full-room state and keeps its draft', async ({ browser }) => {
   const f = await pair(browser);
   try {

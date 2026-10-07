@@ -10,6 +10,7 @@
     "start:all": "concurrently --kill-others-on-fail --names \"node,asl\" --prefix-colors \"cyan,green\" \"npm start\" \"npm run asl\"",
     "test": "node --test test/*.test.js",
     "test:browser": "playwright test",
+    "test:browser:compat": "playwright test --config playwright.compat.config.js",
     "asl:download": "python asl/download_dataset.py",
     "asl:collect": "python asl/collect.py",
     "asl:train": "python asl/train.py",

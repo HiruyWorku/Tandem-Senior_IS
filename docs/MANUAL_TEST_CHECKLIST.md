@@ -35,6 +35,7 @@ Reload both devices before the batch so they use the current client and connecti
 - Controlled browser-offline plus transport interruption recovered fresh captions, peer video, local tracks, draft and typed delivery. Physical radio handoff remains M04.
 - Real Google 15-second incoming-PCM idle cutoff and deliberate restart passed, including fresh peer final captions and typed delivery during pause. The session deadline is covered by deterministic rotation/retry tests and an accelerated browser journey.
 - Desktop/mobile controlled server-busy recovery preserves and delivers drafts. Local admission tests cover concurrent capacity, replacement admission, raw polling cleanup and preservation of active room members.
+- Automated Chrome, Firefox and WebKit journeys cover native synthetic video, PCM capture, caption retry/pause, audio-context suspension, private invitations, reconnection and draft retention. This does not replace physical device/background/network checks.
 - Post-test streams, sockets and rooms returned to zero. Tests use synthetic media, not measured real-user accuracy.
 
 Pause captions or leave after testing to stop paid recognition. Two active microphones count as two audio streams. Experimental ASL/avatar remain disabled; do not interpret these checks as fluent ASL translation validation.

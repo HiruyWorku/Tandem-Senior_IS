@@ -145,4 +145,5 @@ __marimo__/
 # Browser verification artifacts
 .impeccable/review/
 tandem-app/test-results/
+tandem-app/test-results-compat/
 tandem-app/playwright-report/

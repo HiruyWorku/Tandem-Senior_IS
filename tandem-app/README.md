@@ -51,6 +51,7 @@ Provider failures emit structured event names and sanitized numeric codes. SDK m
 ```sh
 npm test
 npm run test:browser
+npm run test:browser:compat
 ```
 
 The server tests use real local Socket.IO connections and fake paid providers. Browser tests use Playwright, local Google Chrome, and synthetic camera/microphone streams. On CI they use Playwright Chromium. To run Chromium locally instead of installed Chrome:
@@ -59,6 +60,8 @@ The server tests use real local Socket.IO connections and fake paid providers. B
 npx playwright install chromium
 PLAYWRIGHT_CHANNEL=chromium npm run test:browser
 ```
+
+Install the additional engines with `npx playwright install firefox webkit`, then run `npm run test:browser:compat` for the same journeys in Firefox and WebKit. Firefox uses fake media preferences; WebKit uses its automated capture devices with camera/microphone permissions. Both exercise native WebRTC and AudioWorklet paths. WebKit automation does not establish physical iPhone/Safari behavior; the owner device checklist remains required. Separate output directories keep compatibility artifacts from colliding with the primary suite. CI installs and checks all three engines without paid speech providers.
 
 Tests exercise signed invitation tampering/expiry/room binding, authenticated ICE credentials, origin rejection, creation quotas, private browser invitations and restart recovery, room capacity/idempotency/isolation, validated signaling, caption cleanup and bounded replay/timed duplicate suppression, credential scheduling/retry/cleanup, two-browser simultaneous ICE restart, authenticated aggregate monitoring, AudioWorklet binary transport and PCM encoding, caption pause/mute/recovery, unsupported capture, explicit messages and retry deduplication, private recognition drafts, stale speech jobs, media permission denial, browser video, peer replacement, socket/server reconnection with preserved drafts, and desktop/mobile replies. Completed captions stay in the current page’s conversation history; they are not recorded or stored on disk. They do not establish cross-network reliability or ASL/speech accuracy.
 

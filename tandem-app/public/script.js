@@ -247,7 +247,9 @@ async function setupAudioProcessing(stream) {
     onState: state => {
       captureState = state;
       syncCapture();
-      if (joinedRoom && ['suspended', 'interrupted', 'failed'].includes(state)) setCaptionEnabled(false);
+      // A replacement context can start suspended while the explicit retry is resuming it.
+      // Do not let that intermediate state supersede the in-flight user request.
+      if (joinedRoom && !captionBusy && ['suspended', 'interrupted', 'failed'].includes(state)) setCaptionEnabled(false);
     },
   });
   try {
@@ -288,6 +290,8 @@ async function setCaptionEnabled(enabled) {
       providerState = enabled ? 'ready' : 'paused';
     }
     syncCapture();
+    // An interruption during acknowledgement must still release the recognizer.
+    if (enabled && captureState !== 'running') setCaptionEnabled(false);
   });
 }
 

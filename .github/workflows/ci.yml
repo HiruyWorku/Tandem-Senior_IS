@@ -19,12 +19,15 @@ jobs:
           cache-dependency-path: tandem-app/package-lock.json
       - run: npm ci
       - run: npm test
-      - run: npx playwright install --with-deps chromium
+      - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run test:browser
+      - run: npm run test:browser:compat
       - run: npm audit --omit=dev --audit-level=high
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: browser-test-results
-          path: tandem-app/test-results/
+          path: |
+            tandem-app/test-results/
+            tandem-app/test-results-compat/
           retention-days: 7
