@@ -5,6 +5,44 @@ on:
 permissions:
   contents: read
 jobs:
+  # Explicit commit opt-in keeps this hour-long, synthetic staging check out of
+  # routine builds. The public repository uses a standard hosted Linux runner.
+  relay-renewal:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/production-rebuild' && contains(github.event.head_commit.message, '[relay-renewal]')
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    concurrency:
+      group: tandem-staging-relay-renewal
+      cancel-in-progress: false
+    defaults:
+      run:
+        working-directory: tandem-app
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: tandem-app/package-lock.json
+      - run: npm ci
+      - name: Configure bounded Ubuntu package downloads
+        run: |
+          test -f /etc/apt/apt-mirrors.txt
+          printf '%s\n' 'https://archive.ubuntu.com/ubuntu/' | sudo tee /etc/apt/apt-mirrors.txt
+          printf '%s\n' 'Acquire::Retries "2";' 'Acquire::http::Timeout "30";' 'Acquire::https::Timeout "30";' | sudo tee /etc/apt/apt.conf.d/99-tandem-downloads
+      - run: npx playwright install --with-deps chromium
+        timeout-minutes: 10
+      - name: Verify continuous relay beyond credential expiry
+        env:
+          PLAYWRIGHT_CHANNEL: chromium
+        run: node deploy/staging/relay-renewal-smoke.cjs https://tandem-34-27-182-54.sslip.io relay-renewal-report.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: relay-renewal-counts
+          path: tandem-app/relay-renewal-report.jsonl
+          retention-days: 7
   verify:
     runs-on: ubuntu-24.04
     timeout-minutes: 20

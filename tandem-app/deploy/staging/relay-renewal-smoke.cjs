@@ -26,6 +26,12 @@ async function main() {
     await context.addInitScript(() => {
       window.relayPeers = [];
       window.relayEvents = [];
+      for (const name of ['pagehide', 'pageshow', 'freeze', 'resume']) {
+        window.addEventListener(name, event => window.relayEvents.push({ event: name,
+          persisted: Boolean(event.persisted), at: Math.round(performance.now()) }));
+      }
+      document.addEventListener('visibilitychange', () => window.relayEvents.push({ event: 'visibility',
+        state: document.visibilityState, at: Math.round(performance.now()) }));
       window.addEventListener('tandem:socket', event => {
         event.detail.on('connect', () => window.relayEvents.push({ event: 'socket_connected', at: Math.round(performance.now()) }));
         event.detail.on('disconnect', reason => window.relayEvents.push({ event: 'socket_disconnected',

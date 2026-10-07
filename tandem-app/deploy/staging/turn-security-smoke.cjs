@@ -103,6 +103,13 @@ async function main() {
     assert.equal(allocated.type, 0x0103, 'Authenticated UDP allocation failed');
     const publicPermission = await connection.request(0x0008, [xorPeer('34.30.255.171'), ...auth], integrity);
     assert.equal(publicPermission.type, 0x0108, 'Public relay peer permission failed');
+    if (process.argv.includes('--reload-window')) {
+      console.log(`${new Date().toISOString()} Authenticated TLS allocation ready; 30-second certificate reload window opened.`);
+      await new Promise(resolve => setTimeout(resolve, 30000));
+      assert.equal((await connection.request(0x0008, [xorPeer('34.30.255.171'), ...auth], integrity)).type,
+        0x0108, 'Existing TLS allocation did not survive certificate reload');
+      console.log(`${new Date().toISOString()} Existing TLS connection and allocation remain usable after the reload window.`);
+    }
     for (const address of ['169.254.169.254', '10.128.0.1', '127.0.0.1', '172.16.0.1', '192.168.0.1']) {
       const denied = await connection.request(0x0008, [xorPeer(address), ...auth], integrity);
       assert.equal(denied.error, 403, 'Private peer permission was not rejected');
