@@ -4,6 +4,21 @@ Deployed on 2026-10-05 in project `project-af454814-40f3-4eb7-9f9`, following ow
 
 The existing `turn-server` e2-micro VM in us-central1-a uses reserved IPv4 34.30.255.171. With separate owner approval, coturn was migrated from static users to shared-secret authentication, preserving a root-only configuration backup. Its relay range is 49160–49200. Public/private mapping is explicitly 34.30.255.171/10.128.0.2 with relay-ip=10.128.0.2. No additional TURN VM was created. TURN TLS and restricted-network coverage remain release gates.
 
+### TURN TLS preparation
+
+`turn-tls.py` is prepared for the existing Ubuntu 22.04 coturn 4.5.2 VM; it has not yet been activated. It preserves shared-secret authentication, the UDP/TCP 3478 listener and relay range. Initial installation adds TLS on TCP 443, protected certificate revisions, a bind capability/reload systemd drop-in, a root-only prior configuration and a Certbot deploy hook. Run initial activation only on idle staging because it restarts coturn. Certificate renewal uses coturn's SIGUSR2 certificate reload and verifies the actual trusted certificate served locally; failed activation restores and verifies prior service/certificate state. Failed recovery is reported explicitly, with protected backups retained.
+
+Before activation, issue a trusted certificate for a DNS hostname resolving to the relay's reserved IPv4. A temporary IP-derived sslip.io hostname can serve staging; owned DNS remains a production gate. Install Certbot on the existing VM and allow HTTP-01 TCP 80 to that relay only, plus TCP 443 for TLS. Standalone issuance needs port 80 free; the existing coturn listener must remain on 3478. Use a Certbot lineage directly under `/etc/letsencrypt/live`, then run:
+
+```sh
+sudo python3 turn-tls.py --hostname <relay-hostname> --lineage /etc/letsencrypt/live/<certificate-name>
+sudo certbot renew --dry-run
+```
+
+Only add `turns:<relay-hostname>:443?transport=tcp` to the application's TURN_URLS after trusted TLS activation passes; preserve existing TURN URLs and the shared secret. Reload runtime configuration on idle app staging, then run `node deploy/staging/smoke.cjs <https-origin> --tls`. This mode filters to TURN TLS endpoints and requires a relay allocation/data delivery with temporary credentials. It does not prove traversal of arbitrary corporate proxies. Test on an actually restricted network separately. The eight simulated TLS installation/renewal failure cases are included in `npm test`; they do not replace certificate issuance, real reload/allocation checks or restricted-network device testing.
+
+Coturn's installed-version reload behavior is documented in its [4.5.2 source](https://github.com/coturn/coturn/blob/4.5.2/src/apps/relay/mainrelay.c); Certbot standalone and deployment hooks are covered by the [Certbot guide](https://eff-certbot.readthedocs.io/en/stable/using.html).
+
 The new `tandem-staging` e2-small app VM in us-central1-a has a 20 GiB pd-standard boot disk and reserved IPv4 34.27.182.54 (`tandem-staging-ip`). Docker Compose runs Node and pinned Caddy 2.11.6 (2.11.7's Docker tag was unavailable during deployment). The app port and Caddy admin port are not published. Public metrics are blocked by the proxy. The app uses one explicitly trusted proxy hop; edge per-client limits remain a deployment gate.
 
 The app is isolated from the legacy default network in VPC `tandem-staging`, subnet `tandem-staging-us-central1` (10.42.0.0/24). Public ingress permits TCP 80/443 only for tag tandem-staging; administrative TCP 22 permits IAP range 35.235.240.0/20. Existing TURN firewall rules were unchanged. No database, Redis, Kubernetes, artifact registry repository, or load balancer was added.

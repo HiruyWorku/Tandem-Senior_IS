@@ -4,6 +4,8 @@ const { io } = require('socket.io-client');
 
 async function main() {
   const origin = new URL(process.argv[2]).origin;
+  const tlsOnly = process.argv[3] === '--tls';
+  assert.ok(!process.argv[3] || tlsOnly, 'Optional mode must be --tls');
   assert.equal(new URL(origin).protocol, 'https:');
   for (const endpoint of ['/health', '/ready']) {
     assert.equal((await fetch(origin + endpoint)).status, 200);
@@ -42,10 +44,16 @@ async function main() {
     await a.locator('#replySend').click();
     await b.getByText('Staging connection check', { exact: true }).waitFor();
     console.log('HTTPS, private invitation, WebSocket admission and typed reply passed.');
-    const result = await landing.evaluate(async token => {
+    const result = await landing.evaluate(async ({ token, tlsOnly }) => {
       const response = await fetch('/ice-config', { headers: { Authorization: `Bearer ${token}` } });
       if (!response.ok) throw new Error('ICE configuration rejected');
-      const iceServers = await response.json();
+      let iceServers = await response.json();
+      if (tlsOnly) {
+        iceServers = iceServers.map(server => ({ ...server,
+          urls: [server.urls].flat().filter(url => url.startsWith('turns:') && url.endsWith('?transport=tcp')),
+        })).filter(server => server.urls.length);
+        if (!iceServers.length) throw new Error('No TURN TLS endpoint is configured');
+      }
       const peers = [new RTCPeerConnection({ iceServers, iceTransportPolicy: 'relay' }), new RTCPeerConnection({ iceServers, iceTransportPolicy: 'relay' })];
       const candidates = [[], []];
       const errors = [];
@@ -78,9 +86,12 @@ async function main() {
         const pair = [...stats.values()].find(item => item.type === 'candidate-pair' && item.state === 'succeeded' && item.nominated);
         return { message, local: stats.get(pair?.localCandidateId)?.candidateType, remote: stats.get(pair?.remoteCandidateId)?.candidateType };
       } finally { peers.forEach(peer => peer.close()); }
-    }, token);
+    }, { token, tlsOnly });
     assert.deepEqual(result, { message: 'relay-ok', local: 'relay', remote: 'relay' });
-    console.log('Forced TURN relay allocated and delivered data with temporary credentials.');
+    console.log(`Forced TURN${tlsOnly ? ' TLS' : ''} relay allocated and delivered data with temporary credentials.`);
   } finally { await browser.close(); }
 }
-main().catch(error => { console.error(error.message); process.exitCode = 1; });
+main().catch(error => {
+  console.error(error.message.split('\n')[0].replace(/https?:\/\/\S+/g, '[staging URL]'));
+  process.exitCode = 1;
+});
