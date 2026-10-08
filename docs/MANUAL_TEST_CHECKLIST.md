@@ -36,6 +36,7 @@ Since the 2026-10-08 release, choose **Start captions** on each microphone you w
 - Staging HTTPS/private invitation/typed replies/forced TURN delivery and service restart pass.
 - Real Google sample transcription, peer final delivery and pause pass.
 - One real recognition rotation passed at 270001 ms; no provider retry; largest final-result gap 5025 ms with an approximately 4.8-second repeating fixture.
+- Hosted real TURN continuity passed for 3644 seconds, ending 46 seconds after original expiry. Both credentials renewed, all 120 samples showed moving displayed video, 120 typed exchanges passed and both peer connections remained intact. This used low-bandwidth synthetic media with captions disabled; physical long-call behavior remains M10.
 - Controlled browser-offline plus transport interruption recovered fresh captions, peer video, local tracks, draft and typed delivery. Physical radio handoff remains M04.
 - Real Google 15-second incoming-PCM idle cutoff and deliberate restart passed, including fresh peer final captions and typed delivery during pause. The session deadline is covered by deterministic rotation/retry tests and an accelerated browser journey.
 - Desktop/mobile controlled server-busy recovery preserves and delivers drafts. Local admission tests cover concurrent capacity, replacement admission, raw polling cleanup and preservation of active room members.

@@ -30,6 +30,12 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
   const app = express();
   app.set('trust proxy', positiveInteger(env.TRUST_PROXY_HOPS, 0, 0, 5));
   const server = http.createServer(app);
+  const transports = new Set();
+  server.on('connection', transport => {
+    transports.add(transport);
+    transport.once('close', () => transports.delete(transport));
+  });
+  let shutdown;
   const maxConnections = positiveInteger(env.MAX_CONNECTIONS, 100, 2, 10000);
   const unjoinedTimeoutMs = positiveInteger(env.UNJOINED_TIMEOUT_SECONDS, 30, 5, 300) * 1000;
   const connectionRate = createRateLimit({ limit: positiveInteger(env.MAX_HANDSHAKES_PER_MINUTE, 60, 1, 1000), interval: 60000 });
@@ -165,12 +171,26 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
     res.json(servers);
   });
   app.use((error, _req, res, _next) => {
-    const status = error.type === 'entity.too.large' ? 413 : error instanceof SyntaxError ? 400 : 500;
+    const status = error.type === 'entity.too.large' ? 413 :
+      error.type === 'request.aborted' || error instanceof SyntaxError ? 400 : 500;
     if (status === 500) telemetry.failure('http_failed', status);
     res.status(status).json({ error: status === 500 ? 'Request failed.' : 'Invalid request body.' });
   });
   return { app, server, io, capabilities,
-    close: () => { draining = true; return new Promise(resolve => io.close(resolve)); } };
+    close: () => {
+      if (shutdown) return shutdown;
+      draining = true;
+      shutdown = new Promise(resolve => {
+        // Socket.IO closes rooms/providers first. Incomplete HTTP requests or
+        // upgrade/keep-alive connections must not prevent the listener closing.
+        const deadline = setTimeout(() => {
+          for (const transport of transports) transport.destroy();
+        }, 5000);
+        deadline.unref?.();
+        io.close(() => { clearTimeout(deadline); resolve(); });
+      });
+      return shutdown;
+    } };
 }
 
 if (require.main === module) {

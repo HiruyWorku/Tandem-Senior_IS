@@ -16,6 +16,7 @@ MAX_CONNECTIONS bounds admitted Socket.IO clients (default 100; staging 20), inc
 
 - `/health`: process liveness, HTTP 200. It does not check paid providers.
 - `/ready`: HTTP 200 with `{"ready":true}` while running. Shutdown marks readiness false before closing Socket.IO and the HTTP server. A shutdown may finish before a probe sees HTTP 503.
+- Prepared shutdown is idempotent: room/provider cleanup runs first, then a five-second deadline destroys remaining raw HTTP/upgrade transports. The process retains its ten-second exit deadline. This bounds unfinished requests during maintenance; it does not provide zero-downtime calls. Node's normal HTTP close leaves active requests and `closeAllConnections` excludes upgraded sockets, so the deadline tracks raw connections. See [Node 24 HTTP closure behavior](https://nodejs.org/docs/latest-v24.x/api/http.html#servercloseallconnections). This change is not yet deployed.
 - `/metrics`: disabled (404) unless METRICS_TOKEN is configured. Scrapes must supply the exact bearer token in the Authorization header. Restrict scraping to your monitoring network as well as authenticating it.
 
 Metrics expose process uptime/memory, active sockets/rooms/caption streams/provider jobs, request latency buckets, and fixed event counters. No conversation content, identifiers, IPs, or invitation credentials are metric labels. Counters reset on process restart. `client_*` reports are rate-limited diagnostics, not trusted accounting.

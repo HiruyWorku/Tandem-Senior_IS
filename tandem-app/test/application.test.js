@@ -48,6 +48,33 @@ test('credential-free startup serves the app with optional features disabled', a
   assert.equal((await fetch(`${f.url}/pose?text=hello`)).status, 503);
 });
 
+test('shutdown bounds incomplete HTTP connections, clears calls and allows the same port to restart', { timeout: 10000 }, async t => {
+  const net = require('node:net');
+  const logs = [];
+  const f = await fixture(t, { logger: event => logs.push(event) });
+  const port = f.server.address().port;
+  const a = await f.client(); const b = await f.client(); await join(a); await join(b);
+  const incomplete = net.connect(port, '127.0.0.1');
+  incomplete.on('error', () => {});
+  t.after(() => incomplete.destroy());
+  await new Promise(resolve => incomplete.once('connect', resolve));
+  const headersAccepted = new Promise(resolve => f.server.once('request', resolve));
+  incomplete.write('POST /api/rooms HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: 1000\r\n\r\n{');
+  await headersAccepted;
+  const closed = new Promise(resolve => incomplete.once('close', resolve));
+  const shutdown = f.close();
+  assert.equal(f.close(), shutdown, 'Repeated shutdown shares its completion');
+  await Promise.all([shutdown, closed]);
+  assert.equal(f.bindings.size, 0); assert.equal(f.io.sockets.sockets.size, 0);
+  assert.equal(logs.some(event => event.event === 'http_failed'), false, 'Expected shutdown abort is not an internal failure');
+  const replacement = createApplication({ env: { REQUIRE_ROOM_TOKEN: 'false' } });
+  t.after(() => replacement.close());
+  await new Promise((resolve, reject) => {
+    replacement.server.once('error', reject); replacement.server.listen(port, '127.0.0.1', resolve);
+  });
+  assert.equal((await fetch(`http://127.0.0.1:${port}/ready`)).status, 200);
+});
+
 test('captions can be enabled while paid speech output stays disabled', async t => {
   let synthesisCalls = 0;
   const f = await fixture(t, { env: { REQUIRE_ROOM_TOKEN: 'false', ENABLE_SPEECH: 'true', ENABLE_SPEECH_OUTPUT: 'false' },
