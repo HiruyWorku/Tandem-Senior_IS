@@ -169,7 +169,13 @@ for (const width of [1440, 390]) {
       await expect(pages.b.locator('#toggleMic')).toHaveAttribute('aria-pressed', 'false');
       await expect(pages.b.locator('#toggleCamera')).toHaveAttribute('aria-pressed', 'false');
       // Exactly one handler remains after multiple media acquisitions.
-      await pages.b.locator('#toggleMic').click(); await pages.b.locator('#toggleCamera').click();
+      await pages.b.locator('#toggleMic').click();
+      // Unmuting resumes captions asynchronously and can resize the mobile header.
+      // Wait for that transition before aiming the next native pointer click.
+      await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+      await expect(pages.b.locator('#toggleMic')).toHaveAttribute('aria-pressed', 'true');
+      await pages.b.locator('#toggleCamera').click();
+      await expect(pages.b.locator('#toggleCamera')).toHaveAttribute('aria-pressed', 'true');
       expect(await pages.b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.enabled))).toBe(true);
       expect(pages.errors).toEqual([]);
     } finally { await pages.context.close(); await f.app.close(); }

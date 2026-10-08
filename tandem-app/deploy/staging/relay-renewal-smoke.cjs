@@ -2,12 +2,14 @@ const assert = require('node:assert/strict');
 const { setTimeout: delay } = require('node:timers/promises');
 const { chromium } = require('@playwright/test');
 const fs = require('node:fs');
+const { videoAdvanced } = require('./relay-progress.cjs');
 
 // Uses actual deployed expiry and relay allocations. Never print invitations or ICE credentials.
 async function main() {
   const origin = new URL(process.argv[2]).origin;
   assert.equal(new URL(origin).protocol, 'https:');
   const reportPath = process.argv[3];
+  const restartCheck = process.argv.includes('--restart-check');
   if (reportPath) fs.writeFileSync(reportPath, '', { flag: 'wx', mode: 0o600 });
   const report = value => {
     const line = JSON.stringify(value);
@@ -18,6 +20,21 @@ async function main() {
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
   try {
     const context = await browser.newContext();
+    if (restartCheck) {
+      // Exercise real credential replacement promptly without changing the server
+      // TTL. This diagnostic does not establish continuity past actual expiry.
+      const issued = new Set();
+      await context.route('**/ice-config', async route => {
+        const response = await route.fetch();
+        const page = route.request().frame().page();
+        const headers = response.headers();
+        if (!issued.has(page)) {
+          issued.add(page);
+          headers['x-turn-expires-at'] = String(Math.floor(Date.now() / 1000) + 120);
+        }
+        await route.fulfill({ response, headers });
+      });
+    }
     await context.route('**/capabilities', async route => {
       const response = await route.fetch();
       await route.fulfill({ response, json: { ...await response.json(), captions: false, speechOutput: false } });
@@ -26,6 +43,13 @@ async function main() {
     await context.addInitScript(() => {
       window.relayPeers = [];
       window.relayEvents = [];
+      window.relayPresentedFrames = 0;
+      window.addEventListener('DOMContentLoaded', () => {
+        const video = document.querySelector('#remoteVideo');
+        if (!video) return;
+        const frame = () => { window.relayPresentedFrames++; video.requestVideoFrameCallback(frame); };
+        video.requestVideoFrameCallback(frame);
+      });
       for (const name of ['pagehide', 'pageshow', 'freeze', 'resume']) {
         window.addEventListener(name, event => window.relayEvents.push({ event: name,
           persisted: Boolean(event.persisted), at: Math.round(performance.now()) }));
@@ -101,14 +125,15 @@ async function main() {
         local: stats.get(pair?.localCandidateId)?.candidateType,
         remote: stats.get(pair?.remoteCandidateId)?.candidateType,
         bytes: video.reduce((sum, item) => sum + (item.bytesReceived || 0), 0),
-        frames: video.reduce((sum, item) => sum + (item.framesDecoded || 0), 0),
+        video: video.map(item => ({ id: item.id, bytes: item.bytesReceived || 0, frames: item.framesDecoded || 0 })),
+        presentedFrames: window.relayPresentedFrames,
         tracks: tracks.map(track => track.id), live: tracks.every(track => track.readyState === 'live') };
     });
     let previous = await Promise.all(pages.map(read));
     const peerCounts = previous.map(sample => sample.peerCount);
     let stalled = 0; let samples = 0;
     report({ event: 'started', secondsUntilExpiry: Math.ceil((originalExpiry - started) / 1000),
-      captions: false, maxVideoBitratePerPeer: 24000 });
+      captions: false, maxVideoBitratePerPeer: 24000, diagnosticRestartOnly: restartCheck });
     while (Date.now() < finishAt) {
       await delay(Math.min(30000, finishAt - Date.now()));
       const current = await Promise.all(pages.map(read));
@@ -121,8 +146,11 @@ async function main() {
         assert.equal(sample.local, 'relay'); assert.equal(sample.remote, 'relay');
         assert.deepEqual(sample.tracks, originalTracks[index]); assert.equal(sample.live, true);
       }
-      const moving = current.every((sample, index) => sample.bytes > previous[index].bytes && sample.frames > previous[index].frames);
+      const moving = current.every((sample, index) => videoAdvanced(sample, previous[index]));
       stalled = moving ? 0 : stalled + 1;
+      report({ event: 'media', elapsedSeconds: Math.round((Date.now() - started) / 1000),
+        videoAdvancing: moving, receivedBytes: current.map(sample => sample.bytes),
+        presentedFrames: current.map(sample => sample.presentedFrames), reportCounts: current.map(sample => sample.video.length) });
       assert.ok(stalled < 2, 'Relay video stopped advancing for consecutive samples');
       const message = `Relay renewal check ${++samples}`;
       const sender = samples % 2; const receiver = 1 - sender;
@@ -136,9 +164,15 @@ async function main() {
     }
     assert.ok(expiries.every(values => values.length >= 2 && values.at(-1) > originalExpiry), 'Credentials did not extend');
     assert.equal(stalled, 0, 'Video did not advance after original credential expiry');
-    report({ event: 'passed', elapsedSeconds: Math.round((Date.now() - started) / 1000),
+    report({ event: 'passed', diagnosticRestartOnly: restartCheck, elapsedSeconds: Math.round((Date.now() - started) / 1000),
       secondsPastOriginalExpiry: Math.round((Date.now() - originalExpiry) / 1000),
       renewals: expiries.map(values => values.length - 1), textChecks: samples });
+  } catch (error) {
+    const reasons = ['Peer connection was replaced during the continuous relay check', 'Relay call disconnected',
+      'Relay video stopped advancing for consecutive samples', 'Credentials did not extend',
+      'Video did not advance after original credential expiry', 'Browser runtime error'];
+    report({ event: 'failed', reason: reasons.find(reason => error.message.startsWith(reason)) || 'Relay verification failed' });
+    throw error;
   } finally { await browser.close(); }
 }
 main().catch(error => {

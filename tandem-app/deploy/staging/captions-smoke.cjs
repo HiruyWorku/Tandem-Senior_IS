@@ -57,6 +57,10 @@ async function main() {
     await receiver.goto(await landing.locator('#deafLink').getAttribute('href'));
     await speaker.goto(await landing.locator('#hearingLink').getAttribute('href'));
     await expect(speaker.locator('#replyStatus')).toHaveText('Ready to send.');
+    // Admission precedes capture setup; the explicit choice appears afterward.
+    await expect(speaker.locator('#retryMedia')).toBeEnabled();
+    await expect(speaker.locator('#captionAction')).toBeVisible();
+    await expect(speaker.locator('#captionAction')).toBeEnabled();
     if (await speaker.locator('#captionAction').textContent() === 'Start captions') await speaker.locator('#captionAction').click();
     await expect(speaker.locator('#captionStatus')).toHaveText('Your captions on', { timeout: 30000 });
     await expect(receiver.locator('#remoteCaptions')).toContainText(/Brooklyn/i, { timeout: 30000 });
