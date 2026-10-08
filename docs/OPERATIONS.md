@@ -22,6 +22,10 @@ Metrics expose process uptime/memory, active sockets/rooms/caption streams/provi
 
 Configure your platform to redact Authorization headers and request bodies. The avatar request contains text in its query string; exclude those queries from access logs. Browser history contains private invitation links. Do not export browser traces from real conversations without an explicit privacy policy and consent.
 
+The lightweight `Staging health` workflow checks HTTPS liveness/readiness, anonymous metrics/ICE rejection, and trusted app/relay certificates with at least seven days remaining. It creates no rooms, opens no relay allocation, and uses no paid providers or credentials. Failures produce fixed check names/reasons and a failed workflow; certificate days are public metadata. Network operations have ten-second deadlines and inspected HTTP bodies are limited to 1 KiB. It does not verify media delivery, provider accuracy, authenticated metrics, or notification delivery.
+
+Its first push-triggered hosted verification is pending. Hourly scheduling is prepared for minute 17 and activates only after the workflow reaches the repository default branch (`main`); it is not currently a running hourly monitor. GitHub schedules may be delayed or dropped under load, so this is a staging canary rather than an availability SLA. Check workflow runs and separately verify your chosen notification channel before production. See [GitHub schedule behavior](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule). No external notification recipient was configured.
+
 ## Failure response
 
 | Signal | Check and response |

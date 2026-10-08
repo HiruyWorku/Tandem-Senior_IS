@@ -1,0 +1,27 @@
+name: Staging health
+on:
+  push:
+    branches: [production-rebuild, main]
+    paths:
+      - .github/workflows/staging-health.yml
+      - tandem-app/deploy/staging/health-check.cjs
+      - tandem-app/test/healthCheck.test.js
+  workflow_dispatch:
+  schedule:
+    - cron: '17 * * * *'
+permissions:
+  contents: read
+concurrency:
+  group: tandem-staging-health
+  cancel-in-progress: false
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Check readiness, access boundaries and certificates without calls or paid providers
+        run: node tandem-app/deploy/staging/health-check.cjs https://tandem-34-27-182-54.sslip.io tandem-turn-34-30-255-171.sslip.io
