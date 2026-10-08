@@ -109,7 +109,7 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
   });
   app.use(express.static(path.join(__dirname, 'public')));
   if (capabilities.avatar) app.use(require('./server/poseProxy').createPoseProxy({ telemetry }));
-  else app.get('/pose', (_req, res) => res.status(503).json({ error: 'Signing avatar is disabled.' }));
+  else app.all('/pose', (_req, res) => res.set('Cache-Control', 'no-store').status(503).json({ error: 'Signing avatar is disabled.' }));
 
   const predictRates = new Map();
   app.post('/api/predict', async (req, res) => {

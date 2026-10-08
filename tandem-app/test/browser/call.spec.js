@@ -109,6 +109,61 @@ test('permission denial leaves typed replies usable', async ({ browser }) => {
   } finally { await context.close(); }
 });
 
+test('optional recognition and signing failures withhold private diagnostics and preserve typed calls', async ({ browser }, testInfo) => {
+  const context = await browser.newContext();
+  const marker = 'PRIVATE_OPTIONAL_DIAGNOSTIC';
+  const diagnostics = []; let viewerAllowed = false; let poses = 0;
+  context.on('page', page => page.on('console', message => diagnostics.push(message.text())));
+  await context.route(/https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com)\//, route => route.abort());
+  await context.route('**/capabilities', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), recognition: true, avatar: true, captions: false } });
+  });
+  await context.route('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/+esm', route => route.fulfill({
+    contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' }, body: `throw new Error('${marker}');`,
+  }));
+  await context.route(/https:\/\/(cdn\.skypack\.dev|esm\.sh)\/pose-viewer\/loader/, route => route.fulfill({
+    contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' },
+    body: viewerAllowed ? `export function defineCustomElements() {
+      customElements.define('pose-viewer', class extends HTMLElement {
+        setAttribute(name, value) { if (name === 'src') throw new Error('${marker}'); super.setAttribute(name, value); }
+      });
+    }` : `throw new Error('${marker}');`,
+  }));
+  await context.route('**/pose', route => {
+    expect(route.request().method()).toBe('POST');
+    expect(new URL(route.request().url()).search).toBe('');
+    expect(route.request().postDataJSON()).toEqual({ text: 'Synthetic render check', spoken: 'en', signed: 'ase' });
+    poses++; return route.fulfill({ contentType: 'application/octet-stream', body: 'synthetic pose' });
+  });
+  const a = await context.newPage(); const b = await context.newPage();
+  try {
+    await a.goto(`${baseURL}/deaf.html?room=OPTIONALFAIL`); await b.goto(`${baseURL}/hearing.html?room=OPTIONALFAIL`);
+    await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await expect(a.locator('#aslStatus')).toHaveText('Recognition unavailable · type a reply');
+    await expect(a.locator('#avatar-panel')).toContainText('Signing viewer unavailable.');
+    expect(await a.evaluate(() => typeof window.avatar)).toBe('undefined');
+    await b.locator('#replyText').fill('Typed reply while optional tools are unavailable'); await b.locator('#replySend').click();
+    await expect(a.getByText('Typed reply while optional tools are unavailable', { exact: true })).toBeVisible();
+    expect(poses).toBe(0);
+    for (const width of [1440, 390]) {
+      await a.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      expect(await a.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await a.screenshot({ path: testInfo.outputPath(`optional-unavailable-${width}.png`), fullPage: true });
+    }
+    viewerAllowed = true; await a.reload();
+    await expect.poll(() => a.evaluate(() => typeof window.avatar?.enqueue)).toBe('function');
+    await a.evaluate(() => window.avatar.enqueue('Synthetic render check', 'en', 'ase'));
+    await expect(a.locator('#avatar-status')).toHaveText('Failed to render.');
+    expect(poses).toBe(1);
+    expect(diagnostics.some(line => line.includes(marker))).toBe(false);
+    expect(await a.locator('body').textContent()).not.toContain(marker);
+    await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await a.locator('#replyText').fill('Typed reply after renderer failure'); await a.locator('#replySend').click();
+    await expect(b.getByText('Typed reply after renderer failure', { exact: true })).toBeVisible();
+  } finally { await context.close(); }
+});
+
 for (const width of [1440, 390]) {
   test(`permission retry recovers media and captions without losing a draft at ${width}px`, async ({ browser }, testInfo) => {
     const f = await captionApp();

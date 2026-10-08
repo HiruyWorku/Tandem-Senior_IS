@@ -87,6 +87,7 @@ test('avatar failures never log or return upstream conversation bodies and inval
   const telemetry = createObservability({ logger: event => logs.push(event) });
   let calls = 0;
   const app = express();
+  app.use(express.json({ limit: '16kb' }));
   app.use(createPoseProxy({ telemetry, fetchPose: async () => {
     calls++; return new Response('private conversation and provider detail', { status: 500 });
   } }));
@@ -94,9 +95,13 @@ test('avatar failures never log or return upstream conversation bodies and inval
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => server.close(resolve)));
   const url = `http://127.0.0.1:${server.address().port}`;
-  const invalid = await fetch(`${url}/pose?text=test&spoken=invalid-language`);
+  const legacy = await fetch(`${url}/pose?text=private-conversation`);
+  assert.equal(legacy.status, 405); assert.equal(legacy.headers.get('allow'), 'POST');
+  assert.equal(legacy.headers.get('cache-control'), 'no-store'); assert.equal(calls, 0);
+  const post = body => fetch(`${url}/pose`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  const invalid = await post({ text: 'test', spoken: 'invalid-language' });
   assert.equal(invalid.status, 400); assert.equal(calls, 0);
-  const response = await fetch(`${url}/pose?text=private%20conversation`);
+  const response = await post({ text: 'private conversation' });
   assert.equal(response.status, 503); assert.equal((await response.text()).includes('private conversation'), false);
   assert.deepEqual(logs, [{ event: 'avatar_provider_failed', code: 500 }]);
 });

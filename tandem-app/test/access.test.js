@@ -136,9 +136,12 @@ test('actual server rejects room-code-only access and scopes invitations to one 
 test('protected ICE and provider endpoints require valid bearer credentials without caching', async t => {
   const f = await fixture(t, { TURN_URLS: 'turn:relay.example.com:3478', TURN_SHARED_SECRET: secret });
   for (const path of ['/ice-config', '/pose?text=test']) assert.equal((await fetch(f.url + path)).status, 403);
+  assert.equal((await fetch(`${f.url}/pose`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"text":"test"}' })).status, 403);
   assert.equal((await fetch(`${f.url}/api/predict`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status, 403);
   const invite = await mint(f.url);
   const headers = { Authorization: `Bearer ${invite.token}` };
+  const disabledPose = await fetch(`${f.url}/pose`, { method: 'POST', headers: { ...headers, 'Content-Type': 'application/json' }, body: '{"text":"test"}' });
+  assert.equal(disabledPose.status, 503); assert.equal(disabledPose.headers.get('cache-control'), 'no-store');
   const res = await fetch(`${f.url}/ice-config`, { headers });
   assert.equal(res.status, 200); assert.equal(res.headers.get('cache-control'), 'no-store');
   assert.equal((await res.json()).length, 2);

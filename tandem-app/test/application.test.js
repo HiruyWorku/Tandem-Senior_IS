@@ -90,7 +90,11 @@ test('actual server bounds connected clients and accepts a replacement after dep
   assert.equal(f.io.sockets.sockets.size, 2);
   await join(accepted[0]); await join(accepted[1]);
   const departed = receive(accepted[1], 'peer_disconnected');
-  accepted[0].disconnect(); await departed;
+  const closingTransport = f.io.sockets.sockets.get(accepted[0].id).conn;
+  const transportClosed = new Promise(resolve => closingTransport.once('close', resolve));
+  // A room departure packet can precede the underlying transport's teardown.
+  // Transport admission intentionally counts that connection until it closes.
+  accepted[0].disconnect(); await Promise.all([departed, transportClosed]);
   const replacement = await f.client();
   assert.equal((await join(replacement)).ok, true);
   assert.equal(f.io.sockets.sockets.size, 2);

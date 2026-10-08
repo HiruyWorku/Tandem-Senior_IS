@@ -13,13 +13,25 @@
   } catch { return; }
   try {
     const { defineCustomElements } = await import('https://cdn.skypack.dev/pose-viewer/loader');
-    if (typeof defineCustomElements === 'function') defineCustomElements(window);
+    if (typeof defineCustomElements !== 'function') throw new Error('Signing viewer loader is unavailable.');
+    await defineCustomElements(window);
   } catch (e) {
     try {
       const { defineCustomElements } = await import('https://esm.sh/pose-viewer/loader');
-      if (typeof defineCustomElements === 'function') defineCustomElements(window);
+      if (typeof defineCustomElements !== 'function') throw new Error('Signing viewer loader is unavailable.');
+      await defineCustomElements(window);
     } catch (e2) {
-      console.error('Failed to load pose-viewer custom element', e, e2);
+      console.error('Signing viewer could not be loaded.');
+      const panel = document.getElementById('avatar-panel');
+      if (panel) {
+        const message = document.createElement('p');
+        message.className = 'reply-hint avatar-unavailable'; message.setAttribute('role', 'status');
+        message.textContent = 'Signing viewer unavailable. You can still type replies.';
+        panel.replaceChildren(message);
+      }
+      // A missing viewer cannot display poses. Do not submit conversation text
+      // to the pose service or leave a queue pretending it can render.
+      return;
     }
   }
 
@@ -64,7 +76,7 @@
         document.body.appendChild(container);
       }
     } catch (e) {
-      console.warn('Failed to mount avatar panel, falling back to body append', e);
+      console.warn('Signing viewer panel could not be mounted.');
       try { document.body.appendChild(container); } catch { }
     }
   }
@@ -83,11 +95,6 @@
     statusEl.style.color = isError ? '#fca5a5' : '#a8a8a8';
   }
 
-
-  function buildLocalPoseUrl(text, spoken, signed) {
-    const qs = new URLSearchParams({ text, spoken, signed }).toString();
-    return `/pose?${qs}`;
-  }
 
   // ---------------------------------------------------------------------------
   // SigningQueue — ensures utterances are rendered one at a time, in order.
@@ -155,7 +162,9 @@
 
       try {
         setStatus('Signing…');
-        const response = await fetch(buildLocalPoseUrl(text, spoken, signed), { headers: invitationHeaders(), signal: AbortSignal.timeout(10000) });
+        const response = await fetch('/pose', { method: 'POST',
+          headers: { 'Content-Type': 'application/json', ...invitationHeaders() },
+          body: JSON.stringify({ text, spoken, signed }), signal: AbortSignal.timeout(10000) });
         if (!response.ok) throw new Error('Signing unavailable.');
         const blob = await response.blob();
         if (generation !== this._generation) return;
@@ -172,7 +181,7 @@
         }
       } catch (e) {
         if (generation !== this._generation) return;
-        console.error('[SigningQueue] render error', e);
+        console.error('Signing render failed.');
         setStatus('Failed to render.', true);
         // Still advance the queue so one bad item doesn't stall everything.
         this._scheduleNext(500);

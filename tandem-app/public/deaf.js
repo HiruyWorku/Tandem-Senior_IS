@@ -224,13 +224,13 @@ const MIN_SAME_LETTER_INTERVAL = 900; // ms — don't re-emit same letter too fa
     try {
       if (window.TandemApp.capabilities?.recognition && stream) await initASL();
     } catch (err) {
-      console.error('[ASL] initASL failed:', err);
+      console.error('Experimental recognition could not start.');
       const s = document.getElementById('aslStatus');
-      if (s) s.textContent = 'ASL error — ' + err.message;
+      if (s) s.textContent = 'Recognition unavailable · type a reply';
     }
   } catch (err) {
-    console.error(err);
-    window.TandemApp.setStatus('Error initializing. Check console.');
+    console.error('Call initialization failed.');
+    window.TandemApp.setStatus('Call could not start. Reload to try again.');
   }
 })();
 
@@ -358,7 +358,7 @@ async function handleResults(results, statusEl) {
       modelVersion = d.model_version ?? 1;
     }
   } catch (e) {
-    console.warn('[ASL] API unreachable:', e.message);
+    console.warn('Experimental recognition is unavailable.');
   }
 
   // ── J / Z trajectory detector (runs every frame, parallel to static model) ─
