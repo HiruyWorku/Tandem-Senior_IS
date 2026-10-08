@@ -532,7 +532,9 @@ async function createPeerConnection() {
       trackKind: event.track && event.track.kind
     });
     const [remoteStream] = event.streams;
-    if (remoteVideo) {
+    // Audio and video track events share a stream. Reassigning that same
+    // resource aborts pending playback and needlessly resets the video sink.
+    if (remoteVideo && remoteStream && remoteVideo.srcObject !== remoteStream) {
       remoteVideo.srcObject = remoteStream;
       // Explicitly play — browsers don't auto-play when srcObject is replaced
       // on a video element that was already used (causes black video on reconnect).

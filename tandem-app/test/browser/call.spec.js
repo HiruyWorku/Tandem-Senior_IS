@@ -995,6 +995,12 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
       window.peerConnections = [];
       window.presentedRemoteFrames = 0;
       window.videoPlaybackRetries = 0;
+      window.remoteStreamAssignments = 0;
+      const source = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, 'srcObject');
+      Object.defineProperty(HTMLMediaElement.prototype, 'srcObject', { ...source, set(value) {
+        if (this.id === 'remoteVideo' && value) window.remoteStreamAssignments++;
+        return source.set.call(this, value);
+      } });
       window.addEventListener('tandem:socket', event => {
         const emit = event.detail.emit;
         event.detail.emit = function(name, ...args) {
@@ -1028,6 +1034,7 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
     for (const page of [a, b]) {
       const frames = await page.evaluate(() => window.presentedRemoteFrames);
       await expect.poll(() => page.evaluate(() => window.presentedRemoteFrames), { timeout: 3000 }).toBeGreaterThan(frames + 3);
+      expect(await page.evaluate(() => window.remoteStreamAssignments - window.videoPlaybackRetries)).toBe(1);
     }
     const before = await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id));
     const ufrag = await b.evaluate(() => window.peerConnections.at(-1).localDescription.sdp.match(/a=ice-ufrag:(\S+)/)[1]);
@@ -1063,7 +1070,10 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
     await expect.poll(() => b.locator('#remoteVideo').evaluate(video => video.paused), { timeout: 5000 }).toBe(false);
     expect(await b.evaluate(() => document.querySelector('#remoteVideo').srcObject !== window.beforePlaybackStream)).toBe(true);
     expect(await b.locator('#remoteVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(receivedTracks);
-    expect(await b.locator('#remoteVideo').evaluate(video => ({ muted: video.muted, volume: video.volume }))).toEqual({ muted: false, volume: 0.25 });
+    const audioChoice = await b.locator('#remoteVideo').evaluate(video => ({ muted: video.muted, volume: video.volume }));
+    expect(audioChoice.muted).toBe(false);
+    // Linux WebKit's native audio backend quantizes the volume by a few ppm.
+    expect(audioChoice.volume).toBeCloseTo(0.25, 4);
     const resumedFrames = await b.evaluate(() => window.presentedRemoteFrames);
     await expect.poll(() => b.evaluate(() => window.presentedRemoteFrames)).toBeGreaterThan(resumedFrames + 3);
     expect(await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(before);
@@ -1073,9 +1083,13 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
   } catch (error) {
     const playback = await Promise.all([a, b].map(page => page.evaluate(async () => {
       const peer = window.peerConnections.at(-1);
+      const earlier = await peer.getStats(); const presentedBefore = window.presentedRemoteFrames;
+      await new Promise(resolve => setTimeout(resolve, 500));
       const values = [...(await peer.getStats()).values()];
       const inbound = values.filter(item => item.type === 'inbound-rtp' && (item.kind || item.mediaType) === 'video');
       const outbound = values.filter(item => item.type === 'outbound-rtp' && (item.kind || item.mediaType) === 'video');
+      const delta = (reports, field) => reports.reduce((sum, item) => sum + (earlier.has(item.id) ?
+        Math.max(0, (item[field] || 0) - (earlier.get(item.id)[field] || 0)) : 0), 0);
       const video = document.querySelector('#remoteVideo');
       return { state: peer.connectionState, signaling: peer.signalingState,
         renewed: window.renewedConfigurations, presented: window.presentedRemoteFrames, playbackRetries: window.videoPlaybackRetries,
@@ -1083,6 +1097,9 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
         decoded: inbound.reduce((sum, item) => sum + (item.framesDecoded || 0), 0),
         sentBytes: outbound.reduce((sum, item) => sum + (item.bytesSent || 0), 0),
         sentFrames: outbound.reduce((sum, item) => sum + (item.framesSent || 0), 0),
+        progressDuring500ms: { presented: window.presentedRemoteFrames - presentedBefore,
+          decoded: delta(inbound, 'framesDecoded'), receivedBytes: delta(inbound, 'bytesReceived'),
+          sentFrames: delta(outbound, 'framesSent'), sentBytes: delta(outbound, 'bytesSent') },
         paused: video.paused, readyState: video.readyState, visibility: document.visibilityState,
         displayedTracks: video.srcObject?.getVideoTracks().map(track => ({ live: track.readyState === 'live', muted: track.muted })),
         localTracks: document.querySelector('#localVideo').srcObject?.getVideoTracks().map(track => ({ live: track.readyState === 'live', muted: track.muted, enabled: track.enabled })),
