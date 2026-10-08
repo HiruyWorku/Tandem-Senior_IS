@@ -1,6 +1,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const { chromium, expect } = require('@playwright/test');
+let phase = 'configuration';
 
 async function main() {
   const origin = new URL(process.argv[2]).origin;
@@ -9,14 +10,19 @@ async function main() {
   const checkRotation = process.argv.slice(4).includes('--rotation');
   const checkRecovery = process.argv.slice(4).includes('--recovery');
   const checkLimits = process.argv.slice(4).includes('--limits');
-  const capabilities = await (await fetch(origin + '/capabilities')).json();
+  assert.ok(process.argv.slice(4).every(flag => ['--rotation', '--recovery', '--limits'].includes(flag)));
+  phase = 'capabilities';
+  const capabilities = await (await fetch(origin + '/capabilities', { signal: AbortSignal.timeout(10000) })).json();
   assert.equal(capabilities.captions, true);
   assert.equal(capabilities.speechOutput, false);
+  phase = 'browser';
   const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', args: [
     '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream',
     `--use-file-for-fake-audio-capture=${sample}`,
   ] });
+  const deadline = setTimeout(() => { browser.close().catch(() => {}); }, 600000);
   try {
+    phase = 'admission';
     const context = await browser.newContext();
     const landing = await context.newPage();
     await landing.goto(origin);
@@ -24,6 +30,12 @@ async function main() {
     const receiver = await context.newPage();
     const speakerContext = await browser.newContext();
     const speaker = await speakerContext.newPage();
+    await speaker.route('**/capabilities', async route => {
+      try {
+        const response = await route.fetch();
+        await route.fulfill({ response, json: { ...await response.json(), recognition: false, avatar: false, speechOutput: false } });
+      } catch { await route.abort().catch(() => {}); }
+    });
     await receiver.addInitScript(() => {
       window.peerFinalCount = 0;
       window.addEventListener('tandem:socket', event => event.detail.on('transcript', data => {
@@ -32,9 +44,11 @@ async function main() {
     });
     // One paid microphone is sufficient to prove peer delivery and rotation.
     await receiver.route('**/capabilities', async route => {
-      const response = await route.fetch();
-      const capabilities = await response.json();
-      await route.fulfill({ response, json: { ...capabilities, captions: false, speechOutput: false } });
+      try {
+        const response = await route.fetch();
+        const capabilities = await response.json();
+        await route.fulfill({ response, json: { ...capabilities, captions: false, speechOutput: false, recognition: false, avatar: false } });
+      } catch { await route.abort().catch(() => {}); }
     });
     await speaker.addInitScript(() => {
       const monitor = window.captionCheck = { starts: [], finals: 0, finalGeneration: 0, failures: 0, lastFinalAt: null, maxFinalGapMs: 0, reason: null };
@@ -61,12 +75,14 @@ async function main() {
     await expect(speaker.locator('#retryMedia')).toBeEnabled();
     await expect(speaker.locator('#captionAction')).toBeVisible();
     await expect(speaker.locator('#captionAction')).toBeEnabled();
+    phase = 'captions';
     if (await speaker.locator('#captionAction').textContent() === 'Start captions') await speaker.locator('#captionAction').click();
     await expect(speaker.locator('#captionStatus')).toHaveText('Your captions on', { timeout: 30000 });
     await expect(receiver.locator('#remoteCaptions')).toContainText(/Brooklyn/i, { timeout: 30000 });
     await expect(receiver.locator('.conversation-text').filter({ hasText: /Brooklyn/i }).first()).toBeVisible({ timeout: 15000 });
     console.log('Real Google streaming transcription passed through browser AudioWorklet, Socket.IO and peer final-caption delivery.');
     if (checkRotation) {
+      phase = 'rotation';
       console.log('Checking the scheduled 270-second recognition rotation using one microphone.');
       const deadline = Date.now() + 330000;
       let stats;
@@ -85,6 +101,7 @@ async function main() {
         maxFinalGapMs: Math.round(stats.maxFinalGapMs) }));
     }
     if (checkRecovery) {
+      phase = 'recovery';
       const original = await speaker.evaluate(() => ({ id: window.socket.id,
         tracks: document.querySelector('#localVideo').srcObject.getTracks().map(track => track.id) }));
       await speaker.locator('#replyText').fill('Draft retained through connection loss');
@@ -112,6 +129,7 @@ async function main() {
       console.log('Offline/transport interruption recovered: new socket, same live local tracks, peer video, fresh final captions and retained typed draft delivery.');
     }
     if (checkLimits) {
+      phase = 'limits';
       await speaker.evaluate(() => {
         const socket = window.socket;
         const emit = socket.emit;
@@ -134,10 +152,11 @@ async function main() {
       await expect.poll(() => receiver.evaluate(() => window.peerFinalCount), { timeout: 30000 }).toBeGreaterThan(before);
       console.log('Real-provider idle cutoff and deliberate caption restart passed; typed delivery remained available.');
     }
+    phase = 'pause';
     await speaker.locator('#captionAction').click();
     await expect(speaker.locator('#captionStatus')).toHaveText('Your captions paused');
     await expect(receiver.locator('#peerCaptionStatus')).toHaveText('Peer captions paused');
     console.log('Caption pause acknowledged locally and by the peer.');
-  } finally { await browser.close(); }
+  } finally { clearTimeout(deadline); await browser.close(); }
 }
-main().catch(error => { console.error(error.message); process.exitCode = 1; });
+main().catch(() => { console.error(JSON.stringify({ event: 'captions_failed', phase })); process.exitCode = 1; });

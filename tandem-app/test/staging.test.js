@@ -24,3 +24,30 @@ test('media capacity probe rejects unsafe targets/counts without leaking private
     assert.deepEqual(JSON.parse(result.stderr), { event: 'capacity_failed', reason: 'Media capacity verification failed', phase: 'configuration', readyCalls: 0 });
   }
 });
+
+test('caption probe rejects invalid targets and flags without exposing private invocation details', () => {
+  const { spawnSync } = require('node:child_process');
+  const path = require('node:path');
+  for (const args of [['http://private-target.invalid/#invite=private', 'private-audio.wav'],
+    ['https://private-target.invalid/#invite=private', 'private-audio.wav', '--private-flag'],
+    ['private invitation', 'private-audio.wav']]) {
+    const result = spawnSync(process.execPath, [path.resolve(__dirname, '../deploy/staging/captions-smoke.cjs'), ...args], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(result.status, 1); assert.equal(result.stdout, '');
+    assert.deepEqual(JSON.parse(result.stderr), { event: 'captions_failed', phase: 'configuration' });
+  }
+});
+
+test('other live probes withhold private targets from failure diagnostics', () => {
+  const { spawnSync } = require('node:child_process');
+  const path = require('node:path');
+  const expected = {
+    'admission-smoke.cjs': JSON.stringify({ event: 'admission_failed', phase: 'configuration' }),
+    'smoke.cjs': 'Core staging verification failed; private diagnostics withheld.',
+    'relay-renewal-smoke.cjs': 'Relay verification failed; inspect the count-only report.',
+  };
+  for (const [script, message] of Object.entries(expected)) {
+    const result = spawnSync(process.execPath, [path.resolve(__dirname, '../deploy/staging', script),
+      'http://private-target.invalid/#invite=private'], { encoding: 'utf8', timeout: 5000 });
+    assert.equal(result.status, 1); assert.equal(result.stdout, ''); assert.equal(result.stderr.trim(), message);
+  }
+});

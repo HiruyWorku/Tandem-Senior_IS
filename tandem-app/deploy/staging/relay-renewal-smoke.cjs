@@ -189,8 +189,8 @@ async function main() {
     throw error;
   } finally { await browser.close(); }
 }
-main().catch(error => {
+main().catch(() => {
   // Playwright navigation call logs can contain the private invitation fragment.
-  console.error(error.message.split('\n')[0].replace(/https?:\/\/\S+/g, '[staging URL]'));
+  console.error('Relay verification failed; inspect the count-only report.');
   process.exitCode = 1;
 });

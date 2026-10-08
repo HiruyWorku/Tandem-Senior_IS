@@ -95,7 +95,7 @@ async function main() {
     console.log(`Forced TURN${tlsOnly ? ' TLS' : ''} relay allocated and delivered data with temporary credentials.`);
   } finally { await browser.close(); }
 }
-main().catch(error => {
-  console.error(error.message.split('\n')[0].replace(/https?:\/\/\S+/g, '[staging URL]'));
+main().catch(() => {
+  console.error('Core staging verification failed; private diagnostics withheld.');
   process.exitCode = 1;
 });

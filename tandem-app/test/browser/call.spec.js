@@ -1043,5 +1043,26 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
     await b.locator('#replyText').fill('Still connected after renewal'); await b.locator('#replySend').click();
     await expect(a.locator('.conversation-text')).toContainText(['Still connected after renewal']);
     expect(errors).toEqual([]);
+  } catch (error) {
+    const playback = await Promise.all([a, b].map(page => page.evaluate(async () => {
+      const peer = window.peerConnections.at(-1);
+      const values = [...(await peer.getStats()).values()];
+      const inbound = values.filter(item => item.type === 'inbound-rtp' && (item.kind || item.mediaType) === 'video');
+      const outbound = values.filter(item => item.type === 'outbound-rtp' && (item.kind || item.mediaType) === 'video');
+      const video = document.querySelector('#remoteVideo');
+      return { state: peer.connectionState, signaling: peer.signalingState,
+        renewed: window.renewedConfigurations, presented: window.presentedRemoteFrames,
+        receivedBytes: inbound.reduce((sum, item) => sum + (item.bytesReceived || 0), 0),
+        decoded: inbound.reduce((sum, item) => sum + (item.framesDecoded || 0), 0),
+        sentBytes: outbound.reduce((sum, item) => sum + (item.bytesSent || 0), 0),
+        sentFrames: outbound.reduce((sum, item) => sum + (item.framesSent || 0), 0),
+        paused: video.paused, readyState: video.readyState, visibility: document.visibilityState,
+        displayedTracks: video.srcObject?.getVideoTracks().map(track => ({ live: track.readyState === 'live', muted: track.muted })),
+        localTracks: document.querySelector('#localVideo').srcObject?.getVideoTracks().map(track => ({ live: track.readyState === 'live', muted: track.muted, enabled: track.enabled })),
+        receiverDisplayed: peer.getReceivers().filter(receiver => receiver.track.kind === 'video')
+          .map(receiver => video.srcObject?.getVideoTracks().includes(receiver.track)) };
+    }).catch(() => ({ unavailable: true }))));
+    console.log(JSON.stringify({ event: 'renewal_playback_diagnostic', playback }));
+    throw error;
   } finally { await context.close(); await peerContext.close(); await peerBrowser?.close(); }
 });
