@@ -16,11 +16,13 @@ Feature extraction
   Each image → MediaPipe HandLandmarker → 73-dim vector (features.py)
   Images where no hand is detected are skipped (~5-15 % depending on class).
 
-Why this beats self-collected data
------------------------------------
-  Even though all images come from one signer, 3,000 images per letter
-  capture a wide range of hand orientations, distances, and finger positions
-  within each sign.  That variety is what the model actually needs.
+Evaluation limitation
+---------------------
+  Image count and variation do not establish unseen-signer accuracy. This
+  legacy importer stores features and labels without signer identities or
+  provenance, so its output cannot be used by the signer-held-out evaluator.
+  Review dataset rights and collection records before training; see
+  asl/EVALUATION.md for a separate benchmark contract.
 
 Prerequisites
 -------------

@@ -30,7 +30,9 @@ for (const unavailable of [false, true]) {
         await page.evaluate(() => document.fonts.ready);
         expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
         if (!unavailable) {
-          const loaded = await page.evaluate(() => [...document.fonts].filter(font => font.status === 'loaded').map(font => font.family));
+          // Firefox serializes CSS family names with quotes; Chromium omits them.
+          const loaded = await page.evaluate(() => [...document.fonts].filter(font => font.status === 'loaded')
+            .map(font => font.family.replace(/^(['"])(.*)\1$/, '$2')));
           expect(loaded).toEqual(expect.arrayContaining(['DM Sans', 'Fraunces']));
         }
       }
@@ -43,7 +45,9 @@ for (const unavailable of [false, true]) {
       expect(external).toEqual([]);
       if (!unavailable) {
         expect(fontResponses.length).toBeGreaterThan(0);
-        expect(fontResponses.every(status => status === 200)).toBe(true);
+        expect(fontResponses).toContain(200);
+        // Firefox revalidates cached files when the second role page opens.
+        expect(fontResponses.every(status => status === 200 || status === 304)).toBe(true);
       }
     } finally {
       await context.close();

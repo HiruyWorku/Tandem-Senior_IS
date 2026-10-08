@@ -18,6 +18,7 @@ jobs:
           python3 -m venv /tmp/tandem-asl-contract
           /tmp/tandem-asl-contract/bin/pip install --disable-pip-version-check -r requirements-test.txt
           /tmp/tandem-asl-contract/bin/python test/asl_api_test.py
+          /tmp/tandem-asl-contract/bin/python test/asl_evaluation_test.py
   media-capacity:
     if: github.event_name == 'push' && github.ref == 'refs/heads/production-rebuild' && contains(github.event.head_commit.message, '[media-capacity]')
     needs: [verify, asl-contract]
