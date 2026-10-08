@@ -872,29 +872,45 @@ test('short desktop sidebars can scroll the reply action into view', async ({ br
 
 test('scheduled ICE renewal and simultaneous restart keep shared tracks and typed replies live', async ({ browser }) => {
   const context = await browser.newContext();
-  await context.route(/https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com)\//, route => route.abort());
-  await context.route('**/ice-config', route => route.fulfill({ status: 200, contentType: 'application/json',
-    headers: { 'X-Turn-Expires-At': String(Math.ceil(Date.now() / 1000) + 4) },
-    body: JSON.stringify([{ urls: 'stun:stun.l.google.com:19302' }]) }));
-  await context.addInitScript(() => {
-    window.renewedConfigurations = 0;
-    window.peerConnections = [];
-    const original = RTCPeerConnection.prototype.setConfiguration;
-    RTCPeerConnection.prototype.setConfiguration = function(config) {
-      window.renewedConfigurations++; return original.call(this, config);
-    };
-    const Constructor = RTCPeerConnection;
-    window.RTCPeerConnection = new Proxy(Constructor, { construct(target, args) {
-      const connection = Reflect.construct(target, args); window.peerConnections.push(connection); return connection;
-    } });
-  });
+  // Independent WebKit processes give each caller its own synthetic camera.
+  const peerBrowser = browser.browserType().name() === 'webkit' ? await browser.browserType().launch() : null;
+  const peerContext = await (peerBrowser || browser).newContext(peerBrowser ? { permissions: ['camera', 'microphone'] } : {});
+  for (const callerContext of [context, peerContext]) {
+    await callerContext.route(/https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com)\//, route => route.abort());
+    await callerContext.route('**/ice-config', route => route.fulfill({ status: 200, contentType: 'application/json',
+      headers: { 'X-Turn-Expires-At': String(Math.ceil(Date.now() / 1000) + 8) },
+      body: JSON.stringify([{ urls: 'stun:stun.l.google.com:19302' }]) }));
+    await callerContext.addInitScript(() => {
+      window.renewedConfigurations = 0;
+      window.peerConnections = [];
+      window.presentedRemoteFrames = 0;
+      window.addEventListener('DOMContentLoaded', () => {
+        const video = document.querySelector('#remoteVideo');
+        if (!video) return;
+        const frame = () => { window.presentedRemoteFrames++; video.requestVideoFrameCallback(frame); };
+        video.requestVideoFrameCallback(frame);
+      });
+      const original = RTCPeerConnection.prototype.setConfiguration;
+      RTCPeerConnection.prototype.setConfiguration = function(config) {
+        window.renewedConfigurations++; return original.call(this, config);
+      };
+      const Constructor = RTCPeerConnection;
+      window.RTCPeerConnection = new Proxy(Constructor, { construct(target, args) {
+        const connection = Reflect.construct(target, args); window.peerConnections.push(connection); return connection;
+      } });
+    });
+  }
   const errors = [];
-  context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
-  const a = await context.newPage(); const b = await context.newPage();
+  for (const callerContext of [context, peerContext]) callerContext.on('page', page => page.on('pageerror', error => errors.push(error.message)));
+  const a = await context.newPage(); const b = await peerContext.newPage();
   try {
     await a.goto(`${baseURL}/deaf.html?room=RENEWAL`); await b.goto(`${baseURL}/hearing.html?room=RENEWAL`);
     await expect(b.locator('#replyStatus')).toHaveText('Ready to send.');
     await expect.poll(() => b.evaluate(() => window.peerConnections.at(-1)?.connectionState)).toBe('connected');
+    for (const page of [a, b]) {
+      const frames = await page.evaluate(() => window.presentedRemoteFrames);
+      await expect.poll(() => page.evaluate(() => window.presentedRemoteFrames), { timeout: 3000 }).toBeGreaterThan(frames + 3);
+    }
     const before = await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id));
     const ufrag = await b.evaluate(() => window.peerConnections.at(-1).localDescription.sdp.match(/a=ice-ufrag:(\S+)/)[1]);
     await expect.poll(() => b.evaluate(() => window.renewedConfigurations), { timeout: 10000 }).toBeGreaterThan(0);
@@ -906,10 +922,16 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
       await expect.poll(() => page.evaluate(() => window.peerConnections.at(-1).signalingState)).toBe('stable');
       await expect.poll(() => page.evaluate(() => window.peerConnections.at(-1).connectionState)).toBe('connected');
     }
+    // A connected transport alone does not prove media survived renegotiation.
+    for (const page of [a, b]) {
+      await page.bringToFront();
+      const frames = await page.evaluate(() => window.presentedRemoteFrames);
+      await expect.poll(() => page.evaluate(() => window.presentedRemoteFrames)).toBeGreaterThan(frames + 3);
+    }
     expect(await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(before);
     expect(await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live'))).toBe(true);
     await b.locator('#replyText').fill('Still connected after renewal'); await b.locator('#replySend').click();
     await expect(a.locator('.conversation-text')).toContainText(['Still connected after renewal']);
     expect(errors).toEqual([]);
-  } finally { await context.close(); }
+  } finally { await context.close(); await peerContext.close(); await peerBrowser?.close(); }
 });

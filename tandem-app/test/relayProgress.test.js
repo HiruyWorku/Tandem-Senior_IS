@@ -6,6 +6,8 @@ test('relay progress survives replaced RTP reports and disappearance of old repo
   const old = sample('old', 100000, 1000, 1000);
   const replaced = sample('new', 300, 3, 1003);
   assert.equal(videoAdvanced(replaced, old), true);
+  assert.equal(videoAdvanced(sample('old', 300, 3, 1003), old), true);
+  assert.equal(videoAdvanced(sample('old', 300, 3, 1000), old), false);
   const combined = { video: [...old.video, ...replaced.video], presentedFrames: 1003 };
   assert.equal(videoAdvanced(sample('new', 600, 6, 1006), combined), true);
 });

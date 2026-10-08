@@ -731,8 +731,9 @@ function initSocket(userType, roomCode) {
 
       await pc.setRemoteDescription(offer);
       await flushIceCandidates();
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
+      // Let the operations chain choose the answer atomically. Preparing an
+      // answer separately can race another offer during simultaneous restarts.
+      await pc.setLocalDescription();
       socket.emit('signal:answer', { sdp: pc.localDescription });
       console.log('[client] sent answer');
     } catch (err) {
@@ -792,10 +793,13 @@ async function makeOffer() {
     }
     const connection = pc;
     if (connection.signalingState !== 'stable') return;
-    const offer = await connection.createOffer();
-    if (pc !== connection || connection.signalingState !== 'stable' || !joinedRoom || !peerPresent) return;
-    await connection.setLocalDescription(offer);
-    if (pc === connection && joinedRoom && peerPresent && socket.connected) socket.emit('signal:offer', { sdp: connection.localDescription });
+    // https://www.w3.org/TR/webrtc/#perfect-negotiation-example
+    // Choosing and applying the offer in one operation avoids stale descriptions
+    // when the polite side rolls back for a concurrent remote offer.
+    await connection.setLocalDescription();
+    if (pc === connection && connection.localDescription?.type === 'offer' &&
+        connection.signalingState === 'have-local-offer' && joinedRoom && peerPresent && socket.connected)
+      socket.emit('signal:offer', { sdp: connection.localDescription });
   } finally { if (generation === connectionGeneration) makingOffer = false; }
 }
 
