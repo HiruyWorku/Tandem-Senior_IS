@@ -15,17 +15,25 @@ async function main() {
     args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
   const deadline = setTimeout(() => { browser.close().catch(() => {}); }, 180000);
   const contexts = []; let errors = 0;
+  let currentPages = [], setupStage = 'invitation';
+  const httpFailures = { invitation: [], capabilities: [], ice: [] };
   try {
     const pairs = [];
     phase = 'setup';
     for (let index = 0; index < calls; index++) {
+      currentPages = [];
       const context = await browser.newContext(); contexts.push(context);
       context.setDefaultTimeout(30000);
       context.on('page', page => page.on('pageerror', () => errors++));
+      context.on('response', response => {
+        if (response.status() >= 400 && new URL(response.url()).pathname === '/api/rooms')
+          httpFailures.invitation.push(response.status());
+      });
       await context.route(/https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com)\//, route => route.abort());
       await context.route('**/capabilities', async route => {
         try {
           const response = await route.fetch();
+          if (!response.ok()) httpFailures.capabilities.push(response.status());
           await route.fulfill({ response, json: { ...await response.json(),
             captions: false, speechOutput: false, recognition: false, avatar: false } });
         } catch { errors++; await route.abort().catch(() => {}); }
@@ -35,6 +43,7 @@ async function main() {
       await context.route('**/ice-config', async route => {
         try {
           const response = await route.fetch();
+          if (!response.ok()) httpFailures.ice.push(response.status());
           const servers = (await response.json()).map(server => ({ ...server,
             urls: [server.urls].flat().filter(url => url.startsWith('turns:') && url.endsWith('?transport=tcp')),
           })).filter(server => server.urls.length);
@@ -55,15 +64,19 @@ async function main() {
           window.capacityPeers.push(peer); return peer;
         } });
       });
+      setupStage = 'invitation';
       const landing = await context.newPage(); await landing.goto(origin);
       await landing.waitForFunction(() => document.querySelector('#copyLinkBtn')?.disabled === false);
       const links = await Promise.all(['#deafLink', '#hearingLink'].map(selector => landing.locator(selector).getAttribute('href')));
       const pages = [await context.newPage(), await context.newPage()];
+      currentPages = pages; setupStage = 'navigation';
       await pages[0].goto(links[0]); await pages[1].goto(links[1]); await landing.close();
       for (const page of pages) {
+        setupStage = 'connected_media';
         await page.waitForFunction(() => document.querySelector('#replyStatus').textContent === 'Ready to send.' &&
           window.capacityPeers.at(-1)?.connectionState === 'connected' &&
           document.querySelector('#localVideo').srcObject?.getVideoTracks().length && window.capacityFrames > 1);
+        setupStage = 'bitrate';
         await page.evaluate(async () => {
           for (const sender of window.capacityPeers.at(-1).getSenders()) {
             if (sender.track?.kind === 'audio') sender.track.enabled = false;
@@ -112,10 +125,28 @@ async function main() {
       previous = current;
     }
     console.log(JSON.stringify({ event: 'capacity_passed', calls, peers: pages.length, textChecks: calls * 6, samples: 3, tlsOnly: true }));
+  } catch (error) {
+    const pending = Promise.all(currentPages.map(page => page.evaluate(async () => {
+      const peer = window.capacityPeers?.at(-1);
+      const video = document.querySelector('#remoteVideo');
+      const stats = peer ? [...(await peer.getStats()).values()] : [];
+      return { socketConnected: Boolean(window.socket?.connected),
+        connection: peer?.connectionState || 'missing', signaling: peer?.signalingState || 'missing',
+        frames: window.capacityFrames || 0, paused: video?.paused ?? true, readyState: video?.readyState || 0,
+        localVideoTracks: document.querySelector('#localVideo')?.srcObject?.getVideoTracks().length || 0,
+        decoded: stats.filter(item => item.type === 'inbound-rtp' && (item.kind || item.mediaType) === 'video')
+          .reduce((sum, item) => sum + (item.framesDecoded || 0), 0),
+        relayCandidates: stats.filter(item => item.type === 'local-candidate' && item.candidateType === 'relay').length };
+    }).catch(() => ({ unavailable: true }))));
+    let timer;
+    const playback = await Promise.race([pending, new Promise(resolve => { timer = setTimeout(() => resolve([{ unavailable: true }]), 2000); })]);
+    clearTimeout(timer);
+    console.log(JSON.stringify({ event: 'capacity_diagnostic', phase, setupStage, readyCalls, errors, httpFailures, playback }));
+    throw error;
   } finally {
-    clearTimeout(deadline);
     await Promise.allSettled(contexts.map(context => context.close()));
     await browser.close();
+    clearTimeout(deadline);
   }
 }
 main().catch(() => {
