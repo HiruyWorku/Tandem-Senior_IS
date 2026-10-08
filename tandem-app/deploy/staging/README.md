@@ -78,6 +78,10 @@ This admission check and the core HTTPS/private invitation/text/forced TURN smok
 
 ## Application releases
 
+For an opt-in simultaneous media check, run `node deploy/staging/media-capacity-smoke.cjs https://<staging-host> 3` from tandem-app. Count must be 1–10; each call uses two clients and one newly minted invitation, so respect the invitation quota and existing callers. The harness forces TLS relay, disables all paid/experimental providers, caps video at 24000 bits/s per peer, and exchanges typed replies in both directions while requiring moving displayed video and unchanged peer connections. It samples three times at ten-second intervals after setup and closes the browser at a three-minute deadline. Output contains counts and fixed failure reasons only. This is a short synthetic capacity check, not a long-call, physical-device or all-transports load guarantee. Do not run it concurrently with the hour-long relay test. Live verification of this new harness is pending.
+
+A push to production-rebuild whose head commit message includes `[media-capacity]` runs the ten-call version after full verification. It shares the live relay job's concurrency lock, preventing simultaneous probes, and retains a count-only artifact for seven days. Keep staging unchanged while either live media step runs. Routine commits skip this job.
+
 Use `python3 tandem-app/deploy/staging/package-source.py /private/tmp/tandem-staging-source.tar.gz` from the repository root to prepare source. The packager excludes local `.env`, runtime secrets, release locks, prior Compose snapshots, caches and model artifacts. Upload the archive, verify its checksum and extract it under `/opt/tandem`; preserve the VM's existing `.env` and `runtime.env`. Installing source does not change the running container.
 
 On idle staging, run:
