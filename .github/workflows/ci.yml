@@ -5,9 +5,22 @@ on:
 permissions:
   contents: read
 jobs:
+  asl-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: tandem-app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify experimental inference contract without model artifacts
+        run: |
+          python3 -m venv /tmp/tandem-asl-contract
+          /tmp/tandem-asl-contract/bin/pip install --disable-pip-version-check -r requirements-test.txt
+          /tmp/tandem-asl-contract/bin/python test/asl_api_test.py
   media-capacity:
     if: github.event_name == 'push' && github.ref == 'refs/heads/production-rebuild' && contains(github.event.head_commit.message, '[media-capacity]')
-    needs: verify
+    needs: [verify, asl-contract]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     # Share the live-probe lock: never load staging during the continuous relay check.

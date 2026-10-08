@@ -3,15 +3,11 @@
 ASL Model Training — v2
 ========================
 Trains a 3-layer MLP on MediaPipe landmark features extracted by features.py.
-Replaces the v1 RandomForest with a model that is meaningfully better at
-distinguishing visually similar letters (M/N, S/A, G/H, etc.).
-
-Why MLP beats RandomForest here
---------------------------------
-- Landmark coordinates are continuous and highly correlated; RF treats each
-  split independently and can't model interactions across fingers well.
-- MLP learns smooth decision boundaries in the 73-dim feature space.
-- With 500 samples per class the MLP converges reliably in < 2 minutes on CPU.
+The sample-level cross-validation and hold-out results below do not establish
+unseen-signer accuracy: related signer/session images can appear on both sides
+of those splits. Compare models on a signer-held-out benchmark before making
+quality or runtime claims. Static letters do not establish continuous ASL
+understanding.
 
 Usage
 -----
