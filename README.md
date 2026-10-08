@@ -21,6 +21,7 @@ Open http://localhost:3000 and share the full private invitation link with a sec
 - [tandem-app/](tandem-app/): active application, server, browser UI, and optional ASL tools.
 - [ASL-interpreter/](ASL-interpreter/): legacy training/reference project.
 - [Production plan](docs/PRODUCTION_PLAN.md): audit findings, decisions, and release acceptance gates.
+- [Release evidence](docs/RELEASE_EVIDENCE.md): verified results, their limits, and the remaining full-project gates.
 - [Cumulative testing checklist](docs/MANUAL_TEST_CHECKLIST.md): owner checks saved for a later testing batch, with completed results recorded.
 - [Product context](PRODUCT.md): audience, product limitations, and current UI scope.
 
