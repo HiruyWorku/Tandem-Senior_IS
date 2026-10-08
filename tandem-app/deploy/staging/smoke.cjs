@@ -83,11 +83,15 @@ async function main() {
         await peers[0].setRemoteDescription(peers[1].localDescription);
         const message = await delivered;
         const stats = await peers[0].getStats();
-        const pair = [...stats.values()].find(item => item.type === 'candidate-pair' && item.state === 'succeeded' && item.nominated);
+        const transport = [...stats.values()].find(item => item.type === 'transport' && item.selectedCandidatePairId);
+        const pair = stats.get(transport?.selectedCandidatePairId) || [...stats.values()].find(item =>
+          item.type === 'candidate-pair' && item.state === 'succeeded' && item.nominated);
         return { message, local: stats.get(pair?.localCandidateId)?.candidateType, remote: stats.get(pair?.remoteCandidateId)?.candidateType };
       } finally { peers.forEach(peer => peer.close()); }
     }, { token, tlsOnly });
-    assert.deepEqual(result, { message: 'relay-ok', local: 'relay', remote: 'relay' });
+    assert.equal(result.message, 'relay-ok');
+    assert.ok(result.local === 'relay' && result.remote === 'relay',
+      `Forced relay candidate types were ${result.local || 'missing'}/${result.remote || 'missing'}`);
     console.log(`Forced TURN${tlsOnly ? ' TLS' : ''} relay allocated and delivered data with temporary credentials.`);
   } finally { await browser.close(); }
 }

@@ -14,7 +14,7 @@ Reload both devices before the batch so they use the current client and connecti
 | ID | Check | Expected result | Result |
 | --- | --- | --- | --- |
 | M01 | Confirm video, audio and typed replies in both directions; switch which device uses each role. | Each participant receives the other's video/audio/text. Use headphones or separate rooms. | Pending |
-| M02 | Speak conversational sentences, names, numbers and pauses; note approximate caption delay. | Captions remain readable; record missed/repeated words and delays. Do not send private recordings. | Pending |
+| M02 | Verify video/text before captions; choose Start captions on each microphone you want transcribed, then speak sentences, names, numbers and pauses. Note approximate delay. | Each caller chooses Google transcription independently; captions remain readable. Record missed/repeated words and delays without private recordings. | Pending |
 | M03 | Pause/restart captions, then mute/unmute the microphone. | Pause stops captions without turning off call audio; mute stops microphone audio and its captions; resume works. | Pending |
 | M04 | Switch a phone between Wi-Fi and cellular during a call. | Call and fresh captions recover; typed draft remains. Record whether manual retry is needed. | Pending |
 | M05 | Lock/unlock the phone or background Safari, then return. | Accurate interruption state, no stuck controls, clear recovery. Background media may be restricted by the browser. | Pending |
@@ -27,10 +27,9 @@ Reload both devices before the batch so they use the current client and connecti
 | M12 | Evaluation with Deaf/ASL users when available. | Assess whether captions, attribution, typed reply flow and terminology meet the actual communication need. | Pending |
 | M13 | If a connection is temporarily unavailable/busy, keep an unsent draft and wait for recovery; then send. | Retry preserves the current page draft and sends it once the call is ready. Record any stuck state. | Pending |
 | M14 | Open Devices; select another camera/microphone or Browser default and apply. Try unplugging a selected USB device when available. | Device changes preserve text/drafts and mute/camera choices. A failed selection leaves existing tracks usable; missing hardware is labeled and another selection is available. Phone browsers may expose only one input. | Pending |
-
 | M15 | Leave a call page using browser navigation, then return with Back/Forward. Also try an expired invitation. | A cached return preserves the current-page draft and mute choices, revalidates access and restores the call; expired access does not reacquire camera/microphone. A full reload may lose the unsent draft. | Pending |
 
-For the upcoming explicit-caption release, choose **Start captions** on each microphone you want transcribed. Camera/microphone permission alone will no longer start Google transcription. This change is prepared and not deployed while the long relay check runs.
+Since the 2026-10-08 release, choose **Start captions** on each microphone you want transcribed. Camera/microphone permission alone does not start Google transcription. Staging allows 60 aggregate audio minutes per UTC day; two active microphones consume the allowance twice as fast. There is no need to exhaust the allowance deliberately for this batch. If it runs out during normal testing, video/text should continue and Check captions should recover after UTC midnight.
 
 ## Engineer-verified evidence (does not replace manual checks)
 
