@@ -12,7 +12,7 @@ const { createConnectionAdmission, closeUnadmittedTransports } = require('./serv
 const { createDailyCaptionBudget } = require('./server/captionBudget');
 
 /** Build an isolated application; imports never open a port or call an AI provider. */
-function createApplication({ env = process.env, speech, interpretLetters, synthesize, logger } = {}) {
+function createApplication({ env = process.env, speech, interpretLetters, synthesize, fetchPrediction, logger } = {}) {
   const telemetry = createObservability({ env, logger });
   let draining = false;
   const access = createAccess(env);
@@ -113,6 +113,7 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
 
   const predictRates = new Map();
   app.post('/api/predict', async (req, res) => {
+    res.set('Cache-Control', 'no-store');
     if (!capabilities.recognition) return res.status(503).json({ error: 'Experimental recognition is disabled.' });
     const landmarks = req.body?.landmarks;
     if (!Array.isArray(landmarks) || landmarks.length !== 63 || !landmarks.every(
@@ -131,13 +132,11 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
     }
     if (++rate.count > 20) return res.status(429).json({ error: 'Too many requests.' });
     try {
-      const upstream = await fetch(env.ASL_API_URL || 'http://127.0.0.1:5003/predict', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ landmarks }), signal: AbortSignal.timeout(3000),
-      });
-      const data = await upstream.json();
-      res.status(upstream.status).json(data);
+      const { requestPrediction } = require('./server/predictionProxy');
+      const data = await requestPrediction({ landmarks, url: env.ASL_API_URL || 'http://127.0.0.1:5003/predict', fetchPrediction });
+      res.json(data);
     } catch {
+      telemetry.failure('recognition_provider_failed');
       res.status(503).json({ error: 'Recognition is unavailable. You can still type a reply.' });
     }
   });
