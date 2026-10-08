@@ -11,9 +11,10 @@ async function main() {
   assert.equal(new URL(origin).protocol, 'https:');
   assert.ok(Number.isInteger(calls) && calls >= 1 && calls <= 10);
   phase = 'browser';
-  const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
-    args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] });
-  const deadline = setTimeout(() => { browser.close().catch(() => {}); }, 180000);
+  const browserOptions = { channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome',
+    args: ['--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream'] };
+  const browsers = [await chromium.launch(browserOptions)];
+  const deadline = setTimeout(() => { browsers.forEach(browser => browser.close().catch(() => {})); }, 180000);
   const contexts = []; let errors = 0;
   let currentPages = [], setupStage = 'invitation';
   const httpFailures = { invitation: [], capabilities: [], ice: [] };
@@ -22,7 +23,11 @@ async function main() {
     phase = 'setup';
     for (let index = 0; index < calls; index++) {
       currentPages = [];
-      const context = await browser.newContext(); contexts.push(context);
+      // A single Chromium process exhausted native synthetic capture after
+      // sixteen microphones/cameras. Keep at most ten callers per process;
+      // all twenty peer connections still load the same staging app/relay.
+      if (index > 0 && index % 5 === 0) browsers.push(await chromium.launch(browserOptions));
+      const context = await browsers.at(-1).newContext(); contexts.push(context);
       context.setDefaultTimeout(30000);
       context.on('page', page => page.on('pageerror', () => errors++));
       context.on('response', response => {
@@ -106,7 +111,7 @@ async function main() {
     });
     const pages = pairs.flat();
     let previous = await Promise.all(pages.map(read));
-    console.log(JSON.stringify({ event: 'capacity_started', calls, peers: pages.length, captions: false, maxVideoBitratePerPeer: 24000 }));
+    console.log(JSON.stringify({ event: 'capacity_started', calls, peers: pages.length, browserProcesses: browsers.length, captions: false, maxVideoBitratePerPeer: 24000 }));
     for (let sample = 1; sample <= 3; sample++) {
       phase = 'media';
       await delay(10000);
@@ -124,7 +129,7 @@ async function main() {
       console.log(JSON.stringify({ event: 'capacity_sample', sample, movingPeers: current.length, textChecks: calls * 2 }));
       previous = current;
     }
-    console.log(JSON.stringify({ event: 'capacity_passed', calls, peers: pages.length, textChecks: calls * 6, samples: 3, tlsOnly: true }));
+    console.log(JSON.stringify({ event: 'capacity_passed', calls, peers: pages.length, browserProcesses: browsers.length, textChecks: calls * 6, samples: 3, tlsOnly: true }));
   } catch (error) {
     const pending = Promise.all(currentPages.map(page => page.evaluate(async () => {
       const peer = window.capacityPeers?.at(-1);
@@ -145,7 +150,7 @@ async function main() {
     throw error;
   } finally {
     await Promise.allSettled(contexts.map(context => context.close()));
-    await browser.close();
+    await Promise.allSettled(browsers.map(browser => browser.close()));
     clearTimeout(deadline);
   }
 }
