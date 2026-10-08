@@ -120,16 +120,29 @@ async function main() {
         value.peers === previous[index].peers && value.frames > previous[index].frames));
       // Every room exchanges both directions at each sample, without paid TTS.
       phase = 'text';
-      for (const pair of pairs) for (let sender = 0; sender < 2; sender++) {
-        const text = `Synthetic capacity check ${sample}-${sender}`;
+      for (const [roomIndex, pair] of pairs.entries()) for (let sender = 0; sender < 2; sender++) {
+        const text = `Synthetic capacity check ${sample}-${roomIndex}-${sender}`;
         await pair[sender].locator('#replyText').fill(text); await pair[sender].locator('#replySend').click();
         await pair[1 - sender].getByText(text, { exact: true }).waitFor();
+        await pair[sender].getByText(text, { exact: true }).waitFor();
+      }
+      // Delivery alone would also pass if every room received every message.
+      // Require both histories to contain exactly their own room's traffic.
+      phase = 'isolation';
+      for (const [roomIndex, pair] of pairs.entries()) {
+        const expected = Array.from({ length: sample }, (_, index) => [
+          `Synthetic capacity check ${index + 1}-${roomIndex}-0`,
+          `Synthetic capacity check ${index + 1}-${roomIndex}-1`,
+        ]).flat().sort();
+        for (const page of pair) assert.deepEqual((await page.locator('.conversation-text').allTextContents()).sort(), expected);
       }
       assert.equal(errors, 0);
-      console.log(JSON.stringify({ event: 'capacity_sample', sample, movingPeers: current.length, textChecks: calls * 2 }));
+      console.log(JSON.stringify({ event: 'capacity_sample', sample, movingPeers: current.length,
+        textChecks: calls * 2, isolatedPeers: pages.length }));
       previous = current;
     }
-    console.log(JSON.stringify({ event: 'capacity_passed', calls, peers: pages.length, browserProcesses: browsers.length, textChecks: calls * 6, samples: 3, tlsOnly: true }));
+    console.log(JSON.stringify({ event: 'capacity_passed', calls, peers: pages.length, browserProcesses: browsers.length,
+      textChecks: calls * 6, samples: 3, tlsOnly: true, isolatedCalls: calls }));
   } catch (error) {
     const pending = Promise.all(currentPages.map(page => page.evaluate(async () => {
       const peer = window.capacityPeers?.at(-1);
