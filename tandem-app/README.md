@@ -71,6 +71,8 @@ Install the additional engines with `npx playwright install firefox webkit`, the
 
 Tests exercise signed invitation tampering/expiry/room binding, authenticated ICE credentials, origin rejection, creation quotas, private browser invitations and restart recovery, room capacity/idempotency/isolation, validated signaling, caption cleanup and bounded replay/timed duplicate suppression, credential scheduling/retry/cleanup, two-browser simultaneous ICE restart, authenticated aggregate monitoring, AudioWorklet binary transport and PCM encoding, caption pause/mute/recovery, unsupported capture, explicit messages and retry deduplication, private recognition drafts, stale speech jobs, media permission denial, browser video, peer replacement, socket/server reconnection with preserved drafts, and desktop/mobile replies. Completed captions stay in the current page’s conversation history; they are not recorded or stored on disk. They do not establish cross-network reliability or ASL/speech accuracy.
 
+Development-only axe checks inspect the rendered invitation and admitted call pages at 1440px and 390px, with actual fonts and a typed conversation. Findings fail the browser suite and include rule/element details. These automated checks cover those states, not full accessibility certification. Screen readers, keyboard navigation, 200% zoom, physical devices and the other error/provider states still need the saved manual checks.
+
 ## Container
 
 ```sh

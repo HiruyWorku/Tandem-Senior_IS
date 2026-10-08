@@ -48,3 +48,5 @@ Since the 2026-10-08 release, choose **Start captions** on each microphone you w
 - Post-test streams, sockets and rooms returned to zero. Tests use synthetic media, not measured real-user accuracy.
 
 Pause captions or leave after testing to stop paid recognition. Two active microphones count as two audio streams. Experimental ASL/avatar remain disabled; do not interpret these checks as fluent ASL translation validation.
+
+- Scoped axe checks for the invitation and admitted typed call pages at desktop/mobile sizes pass in Chrome, Firefox and WebKit after secondary-text/Leave contrast fixes. This does not replace keyboard, screen-reader, zoom or physical-device M08 checks; the contrast patch awaits its staging rollout.

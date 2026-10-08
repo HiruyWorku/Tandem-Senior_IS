@@ -13,10 +13,10 @@ colors:
   border-3: "rgba(255, 242, 220, 0.18)"
   text: "#ede9e1"
   text-2: "#9b9186"
-  text-3: "#534d45"
+  text-3: "#92897e"
   amber: "#e8a84c"
   coral: "#e07474"
-  red: "#e05454"
+  red: "#ea6868"
   green: "#6bbf7c"
 typography:
   display:
@@ -95,7 +95,7 @@ Amber identifies the ASL/Deaf role, reply submission, and explicit keyboard focu
 Coral identifies the hearing/speech role. Red marks Leave; green marks connected status.
 
 ### Neutral
-Near-black warm backgrounds step through progressively lighter surfaces. Cream text carries content; muted warm text carries supporting status. Translucent cream borders divide panels and outline controls. The darkest text token appears in incumbent small uppercase labels; its presence is descriptive, not a contrast endorsement.
+Near-black warm backgrounds step through progressively lighter surfaces. Cream text carries content; muted warm text carries supporting status. Translucent cream borders divide panels and outline controls. Secondary labels use the lightened warm text token after rendered contrast checks; Leave uses the lightened red token to preserve legibility on its tinted background. Automated checks cover the invitation and active call surfaces, rather than certifying every state or video overlay.
 
 ## Typography
 
