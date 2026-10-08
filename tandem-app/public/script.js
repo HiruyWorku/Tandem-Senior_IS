@@ -334,7 +334,12 @@ async function initMedia(choices = mediaChoices) {
 
 document.getElementById('retryMedia')?.addEventListener('click', () => { initMedia(); });
 
+function interruptAvatar() {
+  try { window.avatar?.interrupt(); } catch { console.warn('Signing viewer could not be cleared.'); }
+}
+
 function revokeMediaAccess() {
+  interruptAvatar();
   mediaGeneration++;
   mediaPending = false;
   mediaAccessAllowed = false;
@@ -601,6 +606,7 @@ function initSocket(userType, roomCode) {
         labels[data.status] || 'Peer captions unavailable';
   });
   socket.on('disconnect', reason => {
+    interruptAvatar();
     clearTimeout(recoveryTimer); clearTimeout(connectionRetryTimer);
     peerPresent = false; joinedRoom = false; captionRequest++; captionBusy = false; syncCapture();
     updateStageWaiting();
@@ -770,6 +776,7 @@ function initSocket(userType, roomCode) {
   });
 
   socket.on('peer_disconnected', () => {
+    interruptAvatar();
     peerPresent = false;
     clearTimeout(recoveryTimer);
     setStatus('Your peer left. Waiting for someone to join…');

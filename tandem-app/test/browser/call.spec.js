@@ -164,6 +164,61 @@ test('optional recognition and signing failures withhold private diagnostics and
   } finally { await context.close(); }
 });
 
+test('peer departure cancels signing work and late results cannot reach a replacement call', async ({ browser }) => {
+  const context = await browser.newContext(); const errors = [];
+  context.on('page', page => page.on('pageerror', error => errors.push(error.message)));
+  await context.route(/https:\/\/(fonts\.googleapis\.com|fonts\.gstatic\.com)\//, route => route.abort());
+  await context.route('**/capabilities', async route => {
+    const response = await route.fetch();
+    await route.fulfill({ response, json: { ...await response.json(), avatar: true, recognition: false, captions: false } });
+  });
+  await context.route(/https:\/\/(cdn\.skypack\.dev|esm\.sh)\/pose-viewer\/loader/, route => route.fulfill({
+    contentType: 'application/javascript', headers: { 'Access-Control-Allow-Origin': '*' },
+    body: `export function defineCustomElements() { customElements.define('pose-viewer', class extends HTMLElement {}); }`,
+  }));
+  await context.addInitScript(() => {
+    const original = window.fetch.bind(window);
+    window.poseRequests = []; window.poseAborts = 0;
+    window.fetch = (url, options) => {
+      if (url !== '/pose') return original(url, options);
+      return new Promise(resolve => {
+        options.signal.addEventListener('abort', () => window.poseAborts++);
+        window.poseRequests.push({ finish: () => resolve(new Response('synthetic pose')), body: JSON.parse(options.body) });
+      });
+    };
+  });
+  const a = await context.newPage(); const b = await context.newPage();
+  try {
+    await a.goto(`${baseURL}/deaf.html?room=SIGNQUEUE`);
+    await b.goto(`${baseURL}/hearing.html?room=SIGNQUEUE`);
+    await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+    await expect.poll(() => a.evaluate(() => typeof window.avatar?.enqueue)).toBe('function');
+    await a.evaluate(() => { window.avatar.enqueue('Old peer signing'); window.avatar.enqueue('Queued old peer signing'); });
+    await expect.poll(() => a.evaluate(() => window.poseRequests.length)).toBe(1);
+    await b.close();
+    await expect.poll(() => a.evaluate(() => window.poseAborts)).toBe(1);
+    await expect(a.locator('#avatar-status')).toHaveText('');
+    const replacement = await context.newPage();
+    await replacement.goto(`${baseURL}/hearing.html?room=SIGNQUEUE`);
+    await expect(a.locator('#replyStatus')).toHaveText('Ready to send.');
+    // Deliberately resolve the obsolete request despite its abort signal.
+    await a.evaluate(() => window.poseRequests[0].finish());
+    await expect(a.locator('#avatar-viewer')).not.toHaveAttribute('src', /.+/);
+    await a.evaluate(() => window.avatar.enqueue('New peer signing'));
+    await expect.poll(() => a.evaluate(() => window.poseRequests.length)).toBe(2);
+    expect(await a.evaluate(() => window.poseRequests[1].body.text)).toBe('New peer signing');
+    await a.evaluate(() => window.poseRequests[1].finish());
+    await expect(a.locator('#avatar-viewer')).toHaveAttribute('src', /^blob:/);
+    await replacement.close();
+    await expect(a.locator('#avatar-viewer')).not.toHaveAttribute('src', /.+/);
+    // A late viewer event from the departed animation must not restart work.
+    await a.evaluate(() => document.querySelector('#avatar-viewer').dispatchEvent(new Event('firstRender$')));
+    await a.waitForTimeout(600);
+    expect(await a.evaluate(() => window.poseRequests.length)).toBe(2);
+    expect(errors).toEqual([]);
+  } finally { await context.close(); }
+});
+
 for (const width of [1440, 390]) {
   test(`permission retry recovers media and captions without losing a draft at ${width}px`, async ({ browser }, testInfo) => {
     const f = await captionApp();

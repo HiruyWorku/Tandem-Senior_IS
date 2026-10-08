@@ -121,6 +121,8 @@
       this._queue = [];   // Array<{text, spoken, signed}>
       this._playing = false;
       this._timer = null;
+      this._request = null;
+      this._clearFirstRender = null;
     }
 
     /** Add an utterance to the queue and start playback if idle. */
@@ -136,12 +138,21 @@
       this._generation++;
       this._queue = [];
       clearTimeout(this._timer);
+      this._request?.abort();
+      this._clearFirstRender?.();
+      this._clearFirstRender = null;
       this._playing = false;
+      this._hasPlayed = false;
+      viewer?.removeAttribute('src');
+      if (poseObjectUrl) URL.revokeObjectURL(poseObjectUrl);
+      poseObjectUrl = null;
       setStatus('');
     }
 
     async _flush() {
       const generation = this._generation;
+      this._clearFirstRender?.();
+      this._clearFirstRender = null;
       if (this._queue.length === 0) {
         this._playing = false;
         setStatus('');
@@ -159,12 +170,15 @@
       this._playing = true;
       const { text, spoken, signed } = this._queue.shift();
       const duration = estimateDuration(text);
+      const request = new AbortController();
+      this._request = request;
+      const deadline = setTimeout(() => request.abort(), 10000);
 
       try {
         setStatus('Signing…');
         const response = await fetch('/pose', { method: 'POST',
           headers: { 'Content-Type': 'application/json', ...invitationHeaders() },
-          body: JSON.stringify({ text, spoken, signed }), signal: AbortSignal.timeout(10000) });
+          body: JSON.stringify({ text, spoken, signed }), signal: request.signal });
         if (!response.ok) throw new Error('Signing unavailable.');
         const blob = await response.blob();
         if (generation !== this._generation) return;
@@ -186,6 +200,9 @@
         // Still advance the queue so one bad item doesn't stall everything.
         this._scheduleNext(500);
         return;
+      } finally {
+        clearTimeout(deadline);
+        if (this._request === request) this._request = null;
       }
 
       // Primary completion signal: pose-viewer fires `firstRender$` when the
@@ -193,7 +210,7 @@
       // network fetch time doesn't consume signing time.
       let timerStarted = false;
       const onFirstRender = () => {
-        if (timerStarted) return;
+        if (timerStarted || generation !== this._generation) return;
         timerStarted = true;
         clearTimeout(this._timer);
         this._scheduleNext(duration);
@@ -201,6 +218,7 @@
 
       if (viewer) {
         viewer.addEventListener('firstRender$', onFirstRender, { once: true });
+        this._clearFirstRender = () => viewer.removeEventListener('firstRender$', onFirstRender);
       }
 
       // Fallback: if firstRender$ never fires (e.g. network error or
@@ -211,8 +229,10 @@
     }
 
     _scheduleNext(ms, onFire) {
+      const generation = this._generation;
       clearTimeout(this._timer);
       this._timer = setTimeout(() => {
+        if (generation !== this._generation) return;
         if (onFire) onFire();
         this._flush();
       }, ms);
@@ -220,6 +240,7 @@
   }
 
   const queue = new SigningQueue();
+  window.addEventListener('pagehide', () => queue.interrupt());
 
   /**
    * setText — drop-in replacement for the old debounced setter.
