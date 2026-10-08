@@ -76,6 +76,23 @@ test('two users connect with synthetic video and exchange literal text in both d
   } finally { await f.context.close(); }
 });
 
+test('malformed signaling diagnostics omit peer payloads while the existing typed call stays usable', async ({ browser }) => {
+  const f = await pair(browser); const diagnostics = [];
+  f.b.on('console', message => diagnostics.push(message.text()));
+  try {
+    await expect.poll(() => f.b.locator('#remoteVideo').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+    const privateMarker = 'PRIVATE_SIGNALING_DIAGNOSTIC_SENTINEL';
+    await f.a.evaluate(marker => window.socket.emit('signal:offer', {
+      sdp: { type: 'offer', sdp: `v=0\r\n${marker}\r\n` },
+    }), privateMarker);
+    await expect.poll(() => diagnostics.some(line => line === 'Error handling remote offer.')).toBe(true);
+    expect(diagnostics.some(line => line.includes(privateMarker))).toBe(false);
+    await f.b.locator('#replyText').fill('Reply after malformed signaling'); await f.b.locator('#replySend').click();
+    await expect(f.a.getByText('Reply after malformed signaling', { exact: true })).toBeVisible();
+    expect(f.errors).toEqual([]);
+  } finally { await f.context.close(); }
+});
+
 test('permission denial leaves typed replies usable', async ({ browser }) => {
   const context = await browser.newContext();
   await context.addInitScript(() => {
@@ -483,7 +500,7 @@ async function captionApp({ failProvider = false, maxSessionMs = 0, idleMs = 0, 
   return { app, records, speech, url: `http://127.0.0.1:${app.server.address().port}` };
 }
 
-async function captionPair(browser, f, script) {
+async function captionPair(browser, f, script, { startCaptions = true } = {}) {
   const context = await browser.newContext();
   if (script) await context.addInitScript(script);
   const a = await context.newPage(); const b = await context.newPage();
@@ -493,8 +510,51 @@ async function captionPair(browser, f, script) {
   // Admission deliberately precedes permission/capture setup. Wait for that
   // operation to settle before deciding whether audio needs a user gesture.
   for (const page of [a, b]) await expect(page.locator('#retryMedia')).toBeEnabled({ timeout: 15000 });
+  if (startCaptions) for (const page of [a, b]) {
+    const action = page.locator('#captionAction');
+    if (await action.isVisible() && await action.textContent() === 'Start captions') {
+      await action.click(); await expect(action).toBeEnabled();
+    }
+  }
   return { context, a, b, errors };
 }
+
+test('cloud captions require an explicit action while video and typed replies work beforehand', async ({ browser }, testInfo) => {
+  const f = await captionApp(); const pages = await captionPair(browser, f, undefined, { startCaptions: false });
+  try {
+    for (const page of [pages.a, pages.b]) {
+      await expect(page.locator('#captionAction')).toHaveText('Start captions');
+      await expect(page.locator('#captionDisclosure')).toContainText('Google');
+      await expect(page.locator('#captionStatus')).toContainText('Google');
+    }
+    await pages.b.locator('#replyText').fill('A call without cloud transcription'); await pages.b.locator('#replySend').click();
+    await expect(pages.a.getByText('A call without cloud transcription', { exact: true })).toBeVisible();
+    await expect.poll(() => pages.a.locator('#remoteVideo').evaluate(video => video.readyState)).toBeGreaterThanOrEqual(2);
+    expect(f.records.length).toBe(0);
+    await expect(pages.b.locator('#captionOverlay')).toBeHidden();
+    await expect(pages.b.locator('#localCaptionsSidebar')).toHaveText('Start captions to transcribe your speech.');
+    for (const width of [1440, 390]) {
+      await pages.b.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+      expect(await pages.b.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      await pages.b.screenshot({ path: testInfo.outputPath(`caption-choice-${width}.png`), fullPage: true });
+      const controls = await pages.b.locator('.caption-tools').boundingBox();
+      const badge = await pages.b.locator('.role-badge').boundingBox();
+      expect(controls.x + controls.width <= badge.x || badge.x + badge.width <= controls.x ||
+        controls.y + controls.height <= badge.y || badge.y + badge.height <= controls.y).toBe(true);
+    }
+    await pages.b.locator('#captionAction').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions on');
+    await expect(pages.b.locator('#captionOverlay')).toBeVisible();
+    await expect(pages.b.locator('#localCaptionsSidebar')).toHaveText('Synthetic caption result.');
+    expect(f.records.length).toBe(1);
+    await pages.b.locator('#captionAction').click();
+    await expect(pages.b.locator('#captionStatus')).toHaveText('Your captions paused');
+    await expect(pages.b.locator('#captionOverlay')).toBeHidden();
+    await expect(pages.b.locator('#localCaptionsSidebar')).toHaveText('Your captions paused.');
+    expect(f.records[0].destroyed).toBe(true);
+    expect(pages.errors).toEqual([]);
+  } finally { await pages.context.close(); await f.app.close(); }
+});
 
 test('daily caption allowance retains video and text, rejects repeated starts, and recovers on UTC rollover', async ({ browser }) => {
   const { createDailyCaptionBudget } = require('../../server/captionBudget');

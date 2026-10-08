@@ -14,7 +14,10 @@ const signingVideo = document.getElementById('aslVideo');
 
 let capture;
 let joinedRoom = false;
-let captionPaused = false;
+// Microphone permission allows call media; cloud transcription is a separate
+// choice made with Start captions. Keep that choice through recovery.
+let captionPaused = true;
+let captionStartedOnce = false;
 let captureState = 'unavailable';
 let providerState = 'disabled';
 let providerRetryable = false;
@@ -25,6 +28,22 @@ let captionBusy = false;
 const TRANSCRIPT_TIMEOUT = 3000;
 // Per-strip timers so local and remote resets don't cancel each other
 const _transcriptTimers = {};
+let localCaptionLive = false;
+
+function localCaptionPlaceholder() {
+  if (!window.TandemApp.capabilities?.captions) return 'Captions unavailable · type a reply.';
+  if (!isMicOn) return 'Microphone off · captions paused.';
+  if (captionPaused) return captionStartedOnce ? 'Your captions paused.' : 'Start captions to transcribe your speech.';
+  if (providerState === 'paused' || providerState === 'unavailable') return 'Captions paused · type a reply.';
+  return 'Speak — your words appear here…';
+}
+
+function renderLocalCaption(text) {
+  for (const id of ['localCaptions', 'localCaptionsSidebar']) {
+    const element = document.getElementById(id);
+    if (element) { element.textContent = text; element.classList.toggle('live', localCaptionLive); }
+  }
+}
 
 function setupDataChannel(channel) {
   channel.onopen = () => {
@@ -36,7 +55,7 @@ function setupDataChannel(channel) {
   };
 
   channel.onerror = (error) => {
-    console.error('Data channel error:', error);
+    console.error('Data channel error.');
   };
 }
 
@@ -47,7 +66,8 @@ function updateTranscript(transcript, isFinal = true, isLocal = true) {
 
   if (!captionsEl) return;
 
-  captionsEl.textContent = transcript;
+  if (isLocal) { localCaptionLive = true; renderLocalCaption(transcript); }
+  else captionsEl.textContent = transcript;
 
   // Highlight the subtitle strip while speech is active
   const strip = captionsEl.closest('.subtitle-strip');
@@ -57,9 +77,8 @@ function updateTranscript(transcript, isFinal = true, isLocal = true) {
   _transcriptTimers[captionsEl.id] = setTimeout(() => {
       // Reset to idle placeholder text
       if (captionsEl) {
-        captionsEl.textContent = isLocal
-          ? 'Speak \u2014 your words appear here\u2026'
-          : 'Waiting for speech\u2026';
+        if (isLocal) { localCaptionLive = false; renderLocalCaption(localCaptionPlaceholder()); }
+        else captionsEl.textContent = 'Waiting for speech\u2026';
       }
       if (strip) strip.classList.remove('has-text');
   }, TRANSCRIPT_TIMEOUT);
@@ -149,6 +168,8 @@ async function authorizeInvitation(room) {
     const capabilities = await response.json();
     if (pageClosing || generation !== mediaGeneration) return false;
     window.TandemApp.capabilities = capabilities;
+    const disclosure = document.getElementById('captionDisclosure');
+    if (disclosure) disclosure.hidden = !capabilities.captions;
     if (!capabilities.privateRooms && !invitationToken) { mediaAccessAllowed = true; deviceSettings.update(); return true; }
     const result = await fetch('/api/rooms/validate', {
       method: 'POST', headers: { 'Content-Type': 'application/json', ...invitationHeaders() },
@@ -343,7 +364,10 @@ function updateCaptionState() {
   } else if (captureState === 'failed' || captureState === 'unavailable') {
     text = 'Caption capture unavailable · type a reply'; label = 'Retry captions';
   } else if (!isMicOn) { text = 'Microphone off · captions paused'; visible = false; }
-  else if (captionPaused) { text = 'Your captions paused'; label = 'Start captions'; }
+  else if (captionPaused) {
+    text = captionStartedOnce ? 'Your captions paused' : 'Captions off · audio goes to Google when started';
+    label = 'Start captions';
+  }
   else if (captureState !== 'running') { text = 'Start captions to use your microphone'; label = 'Start captions'; }
   else if (providerState === 'unavailable') { label = 'Retry captions'; visible = providerRetryable; }
   else if (providerState === 'paused') { label = 'Start captions'; }
@@ -355,6 +379,12 @@ function updateCaptionState() {
   }
   if (status) status.textContent = text;
   if (action) { action.hidden = !visible; action.textContent = label; action.disabled = captionBusy; }
+  const capturing = captionsConfigured && isMicOn && !captionPaused && captureState === 'running' &&
+    !['paused', 'unavailable', 'disabled', 'reconnecting'].includes(providerState);
+  const overlay = document.getElementById('captionOverlay');
+  if (overlay) overlay.style.display = capturing ? 'flex' : 'none';
+  if (!capturing) { clearTimeout(_transcriptTimers.localCaptions); localCaptionLive = false; }
+  if (!localCaptionLive) renderLocalCaption(localCaptionPlaceholder());
 }
 
 function syncCapture() {
@@ -422,6 +452,7 @@ async function setCaptionEnabled(enabled) {
       providerState = 'unavailable'; providerRetryable = true;
     } else {
       providerState = enabled ? 'ready' : 'paused';
+      if (enabled) captionStartedOnce = true;
     }
     syncCapture();
     // An interruption during acknowledgement must still release the recognizer.
@@ -465,7 +496,7 @@ async function createPeerConnection() {
     setupDataChannel(dataChannel);
     console.log('Created control data channel');
   } catch (err) {
-    console.error('Error creating data channel:', err);
+    console.error('Error creating data channel.');
   }
 
   pc.ondatachannel = (event) => {
@@ -477,7 +508,7 @@ async function createPeerConnection() {
     }
   };
 
-  console.log('[client] RTCPeerConnection created', pc);
+  console.log('[client] RTCPeerConnection created');
 
   if (localStream) {
     localStream.getTracks().forEach((track) => pc.addTrack(track, localStream));
@@ -495,7 +526,7 @@ async function createPeerConnection() {
       // Explicitly play — browsers don't auto-play when srcObject is replaced
       // on a video element that was already used (causes black video on reconnect).
       remoteVideo.play().catch(e => {
-        console.warn('[client] remoteVideo.play() failed:', e.message);
+        console.warn('[client] Remote playback needs a user action.');
       });
     }
   });
@@ -608,7 +639,7 @@ function initSocket(userType, roomCode) {
   socket.on('connect', async () => {
     const connectedSocket = socket;
     clearTimeout(connectionRetryTimer);
-    console.log('[client] socket connected', socket.id);
+    console.log('[client] socket connected');
 
     const restarted = await checkServerInstance();
     if (pageClosing || socket !== connectedSocket || !connectedSocket.connected) return;
@@ -641,7 +672,7 @@ function initSocket(userType, roomCode) {
           window.avatar.enqueue(data.transcript, 'en', 'ase');
         }
       } catch (e) {
-        console.warn('Avatar enqueue failed:', e);
+        console.warn('Avatar enqueue failed.');
       }
     }
   });
@@ -660,7 +691,7 @@ function initSocket(userType, roomCode) {
     if (!isMicOn || captionPaused || captureState !== 'running') setCaptionEnabled(false);
     syncCapture();
     setStatus(`Joined room: ${room}. Peers: ${peers}`);
-    console.log('[client] joined', { room, peers });
+    console.log('[client] joined');
   });
 
   socket.on('room_full', () => {
@@ -682,7 +713,7 @@ function initSocket(userType, roomCode) {
       await peerReset;
       await makeOffer();
     } catch (err) {
-      console.error('Error creating offer', err);
+      console.error('Error creating offer.');
     }
   });
 
@@ -705,7 +736,7 @@ function initSocket(userType, roomCode) {
       socket.emit('signal:answer', { sdp: pc.localDescription });
       console.log('[client] sent answer');
     } catch (err) {
-      console.error('Error handling remote offer', err);
+      console.error('Error handling remote offer.');
     }
   });
 
@@ -720,7 +751,7 @@ function initSocket(userType, roomCode) {
       await flushIceCandidates();
       console.log('[client] applied remote answer');
     } catch (err) {
-      console.error('Error applying remote answer:', err);
+      console.error('Error applying remote answer.');
     } finally { isSettingRemoteAnswerPending = false; }
   });
 
@@ -733,7 +764,7 @@ function initSocket(userType, roomCode) {
       }
       if (candidate) console.log('[client] added remote ice-candidate');
     } catch (err) {
-      if (!ignoreOffer) console.error('Error adding remote ICE candidate:', err);
+      if (!ignoreOffer) console.error('Error adding remote ICE candidate.');
     }
   });
 

@@ -32,7 +32,7 @@
 
     <div class="caption-tools">
       <span id="captionStatus" class="caption-provider-status" role="status">Checking captions…</span>
-      <button id="captionAction" class="caption-action" type="button" hidden>Start captions</button>
+      <button id="captionAction" class="caption-action" type="button" aria-describedby="captionDisclosure" hidden>Start captions</button>
     </div>
     <span class="role-badge badge-deaf">Deaf / HoH</span>
   </header>
@@ -124,6 +124,7 @@
           <p class="conversation-empty">You can type a reply at any time. It will appear here after you send it.</p>
         </div>
         <form id="replyForm" class="reply-form">
+          <p id="captionDisclosure" class="reply-hint" hidden>Starting captions sends your microphone audio to Google for transcription. You can pause captions at any time.</p>
           <label for="replyText">Your reply</label>
           <textarea id="replyText" rows="3" maxlength="1000" placeholder="Type your reply…" aria-describedby="replyHint replyStatus"></textarea>
           <p id="replyHint" class="reply-hint">Enter to send · Shift + Enter for a new line</p>

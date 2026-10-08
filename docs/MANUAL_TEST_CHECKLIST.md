@@ -30,6 +30,8 @@ Reload both devices before the batch so they use the current client and connecti
 
 | M15 | Leave a call page using browser navigation, then return with Back/Forward. Also try an expired invitation. | A cached return preserves the current-page draft and mute choices, revalidates access and restores the call; expired access does not reacquire camera/microphone. A full reload may lose the unsent draft. | Pending |
 
+For the upcoming explicit-caption release, choose **Start captions** on each microphone you want transcribed. Camera/microphone permission alone will no longer start Google transcription. This change is prepared and not deployed while the long relay check runs.
+
 ## Engineer-verified evidence (does not replace manual checks)
 
 - Staging HTTPS/private invitation/typed replies/forced TURN delivery and service restart pass.

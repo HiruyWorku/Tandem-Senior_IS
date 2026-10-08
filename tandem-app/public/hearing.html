@@ -31,7 +31,7 @@
 
     <div class="caption-tools">
       <span id="captionStatus" class="caption-provider-status" role="status">Checking captions…</span>
-      <button id="captionAction" class="caption-action" type="button" hidden>Start captions</button>
+      <button id="captionAction" class="caption-action" type="button" aria-describedby="captionDisclosure" hidden>Start captions</button>
     </div>
     <span class="role-badge badge-hearing">Hearing</span>
   </header>
@@ -116,6 +116,7 @@
           <p class="conversation-empty">You can type a reply at any time. It will appear here after you send it.</p>
         </div>
         <form id="replyForm" class="reply-form">
+          <p id="captionDisclosure" class="reply-hint" hidden>Starting captions sends your microphone audio to Google for transcription. You can pause captions at any time.</p>
           <label for="replyText">Your reply</label>
           <textarea id="replyText" rows="3" maxlength="1000" placeholder="Type your reply…" aria-describedby="replyHint replyStatus"></textarea>
           <p id="replyHint" class="reply-hint">Enter to send · Shift + Enter for a new line</p>
@@ -193,24 +194,6 @@
     if (tagCode) tagCode.textContent = room;
     if (ctrl) ctrl.textContent = room;
     if (tag) tag.style.display = 'flex';
-  }
-
-  // Show caption overlay after a moment (once mic is likely active)
-  setTimeout(() => {
-    const ov = document.getElementById('captionOverlay');
-    if (ov) ov.style.display = 'flex';
-  }, 2500);
-
-  // Mirror captions to sidebar
-  const localCap = document.getElementById('localCaptions');
-  const sidebarCap = document.getElementById('localCaptionsSidebar');
-  if (localCap && sidebarCap) {
-    new MutationObserver(() => {
-      const txt = localCap.textContent || '';
-      sidebarCap.textContent = txt;
-      const live = txt.length > 0 && txt !== 'Speak — your words appear here…';
-      sidebarCap.classList.toggle('live', live);
-    }).observe(localCap, { childList: true, characterData: true, subtree: true });
   }
 
 })();
