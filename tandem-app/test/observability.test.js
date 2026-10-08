@@ -50,11 +50,13 @@ test('authenticated metrics report real room counts and ignore arbitrary client 
   await ack(a, { room: 'METRICS', userType: 'deaf' }); await ack(b, { room: 'METRICS', userType: 'hearing' });
   a.emit('client:health', { event: 'arbitrary secret' });
   a.emit('client:health', { event: 'ice_renewed', text: 'private conversation', token });
+  a.emit('client:health', { event: 'video_playback_retry', text: 'private conversation', token });
   const response = await fetch(`${f.url}/metrics`, { headers: { Authorization: `Bearer ${token}` } });
   const output = await response.text();
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.match(output, /tandem_rooms 1/); assert.match(output, /tandem_sockets 2/);
   assert.match(output, /event="room_joined"\} 2/);
+  assert.match(output, /event="client_video_playback_retry"\} 1/);
   assert.equal(output.includes('METRICS'), false); assert.equal(output.includes('private conversation'), false);
   assert.equal(output.includes('arbitrary secret'), false); assert.equal(output.includes(token), false);
 });

@@ -2,6 +2,7 @@ import { IceLease } from '/iceLease.mjs';
 import { AudioCapture } from '/audioCapture.js';
 import { invitationToken, invitationHeaders } from '/invitation.js';
 import { DeviceSettings } from '/deviceSettings.js';
+import { RemotePlayback } from '/remotePlayback.mjs';
 
 // script.js - Shared WebRTC logic for Tandem
 
@@ -118,6 +119,7 @@ async function loadIceServers() {
 }
 
 let pc;
+let remotePlayback;
 let socket;
 let localStream;
 let mediaPending = false;
@@ -340,6 +342,7 @@ function interruptAvatar() {
 
 function revokeMediaAccess() {
   interruptAvatar();
+  remotePlayback?.dispose(); remotePlayback = null;
   mediaGeneration++;
   mediaPending = false;
   mediaAccessAllowed = false;
@@ -473,6 +476,7 @@ document.getElementById('captionAction')?.addEventListener('click', () => {
 });
 
 async function createPeerConnection() {
+  remotePlayback?.dispose(); remotePlayback = null;
   const generation = ++connectionGeneration;
   makingOffer = false;
   pendingIceCandidates = [];
@@ -495,6 +499,8 @@ async function createPeerConnection() {
 
   const connection = new RTCPeerConnection(config);
   pc = connection;
+  if (remoteVideo) remotePlayback = new RemotePlayback({ video: remoteVideo, connection,
+    onRepair: () => socket?.emit('client:health', { event: 'video_playback_retry' }) });
 
   try {
     dataChannel = pc.createDataChannel('control');
@@ -946,6 +952,7 @@ window.TandemApp = {
 window.addEventListener('online', () => { if (joinedRoom) iceLease.refresh().catch(() => {}); });
 
 window.addEventListener('pagehide', () => {
+  remotePlayback?.dispose(); remotePlayback = null;
   pageClosing = true;
   mediaGeneration++;
   connectionGeneration++;

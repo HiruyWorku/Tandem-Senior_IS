@@ -166,7 +166,7 @@ function registerCallProtocol(io, { speech, interpretLetters, synthesize, capabi
 
     socket.on('client:health', data => {
       if (!session || !allowed('health', 6, 60000)) return;
-      if (['ice_renewed', 'ice_failed', 'media_failed'].includes(data?.event)) telemetry.record(`client_${data.event}`);
+      if (['ice_renewed', 'ice_failed', 'media_failed', 'video_playback_retry'].includes(data?.event)) telemetry.record(`client_${data.event}`);
     });
 
     socket.on('audioData', data => {

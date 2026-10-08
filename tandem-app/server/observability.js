@@ -3,7 +3,7 @@ const EVENTS = new Set(['room_joined', 'room_rejected', 'message_sent', 'speech_
   'connection_rejected', 'connection_idle_closed',
   'speech_started', 'speech_rotated', 'speech_replayed', 'speech_retry', 'speech_unavailable', 'speech_limited', 'audio_dropped',
   'speech_daily_budget', 'speech_budget_unavailable',
-  'avatar_provider_failed', 'recognition_provider_failed', 'ice_issued', 'ice_denied', 'client_ice_renewed', 'client_ice_failed', 'client_media_failed', 'http_failed']);
+  'avatar_provider_failed', 'recognition_provider_failed', 'ice_issued', 'ice_denied', 'client_ice_renewed', 'client_ice_failed', 'client_media_failed', 'client_video_playback_retry', 'http_failed']);
 
 /** Fixed aggregate counters only: no identifiers, content, URLs, or free-form labels. */
 function createObservability({ env = {}, now = Date.now, logger = event => console.warn(JSON.stringify(event)) } = {}) {

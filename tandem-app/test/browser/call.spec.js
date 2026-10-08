@@ -994,6 +994,14 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
       window.renewedConfigurations = 0;
       window.peerConnections = [];
       window.presentedRemoteFrames = 0;
+      window.videoPlaybackRetries = 0;
+      window.addEventListener('tandem:socket', event => {
+        const emit = event.detail.emit;
+        event.detail.emit = function(name, ...args) {
+          if (name === 'client:health' && args[0]?.event === 'video_playback_retry') window.videoPlaybackRetries++;
+          return emit.call(this, name, ...args);
+        };
+      });
       window.addEventListener('DOMContentLoaded', () => {
         const video = document.querySelector('#remoteVideo');
         if (!video) return;
@@ -1042,6 +1050,25 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
     expect(await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().every(track => track.readyState === 'live'))).toBe(true);
     await b.locator('#replyText').fill('Still connected after renewal'); await b.locator('#replySend').click();
     await expect(a.locator('.conversation-text')).toContainText(['Still connected after renewal']);
+    const automaticRetries = await Promise.all([a, b].map(page => page.evaluate(() => window.videoPlaybackRetries)));
+    // Exercise the actual video sink repair even when this engine's spontaneous
+    // renewal freeze does not occur. RTP keeps decoding while the element pauses.
+    await b.locator('#toggleSpeaker').click();
+    await expect(b.locator('#toggleSpeaker')).toHaveAttribute('aria-pressed', 'true');
+    const receivedTracks = await b.locator('#remoteVideo').evaluate(video => {
+      window.beforePlaybackStream = video.srcObject;
+      video.volume = 0.25; video.pause();
+      return video.srcObject.getTracks().map(track => track.id);
+    });
+    await expect.poll(() => b.locator('#remoteVideo').evaluate(video => video.paused), { timeout: 5000 }).toBe(false);
+    expect(await b.evaluate(() => document.querySelector('#remoteVideo').srcObject !== window.beforePlaybackStream)).toBe(true);
+    expect(await b.locator('#remoteVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(receivedTracks);
+    expect(await b.locator('#remoteVideo').evaluate(video => ({ muted: video.muted, volume: video.volume }))).toEqual({ muted: false, volume: 0.25 });
+    const resumedFrames = await b.evaluate(() => window.presentedRemoteFrames);
+    await expect.poll(() => b.evaluate(() => window.presentedRemoteFrames)).toBeGreaterThan(resumedFrames + 3);
+    expect(await b.locator('#localVideo').evaluate(video => video.srcObject.getTracks().map(track => track.id))).toEqual(before);
+    console.log(JSON.stringify({ event: 'renewal_playback_passed', automaticRetries,
+      retriesAfterForcedPause: await b.evaluate(() => window.videoPlaybackRetries) }));
     expect(errors).toEqual([]);
   } catch (error) {
     const playback = await Promise.all([a, b].map(page => page.evaluate(async () => {
@@ -1051,7 +1078,7 @@ test('scheduled ICE renewal and simultaneous restart keep shared tracks and type
       const outbound = values.filter(item => item.type === 'outbound-rtp' && (item.kind || item.mediaType) === 'video');
       const video = document.querySelector('#remoteVideo');
       return { state: peer.connectionState, signaling: peer.signalingState,
-        renewed: window.renewedConfigurations, presented: window.presentedRemoteFrames,
+        renewed: window.renewedConfigurations, presented: window.presentedRemoteFrames, playbackRetries: window.videoPlaybackRetries,
         receivedBytes: inbound.reduce((sum, item) => sum + (item.bytesReceived || 0), 0),
         decoded: inbound.reduce((sum, item) => sum + (item.framesDecoded || 0), 0),
         sentBytes: outbound.reduce((sum, item) => sum + (item.bytesSent || 0), 0),
