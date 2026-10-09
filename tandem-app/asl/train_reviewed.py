@@ -4,6 +4,7 @@ No camera, downloads, benchmark inputs, random sample split or automatic rollout
 """
 import argparse
 import hashlib
+import io
 import json
 import pickle
 from pathlib import Path
@@ -23,7 +24,7 @@ def load_partition(path, manifest_path):
     if any(not isinstance(manifest.get(key), str) or not manifest[key].strip()
            for key in ['source', 'license', 'consent_review']):
         raise ValueError('Dataset source, license and consent review are required.')
-    with np.load(path, allow_pickle=False) as data:
+    with np.load(io.BytesIO(raw), allow_pickle=False) as data:
         arrays = {key: data[key] for key in ['X', 'y', 'signer_id', 'sample_id']}
     X, y, signers, samples = (arrays[key] for key in ['X', 'y', 'signer_id', 'sample_id'])
     count = len(X)

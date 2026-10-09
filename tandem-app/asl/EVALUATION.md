@@ -60,6 +60,11 @@ making a product claim or enabling the experiment for real users.
 
 ## Training without signer leakage
 
+For newly reviewed landmark sessions, use the [collection export format](COLLECTION.md)
+to generate private, signer-separated partitions. Camera acquisition for that
+format remains a separate unfinished step; do not substitute invented identities
+for the old image-only collection.
+
 `npm run asl:train -- ...` now invokes `python -m asl.train_reviewed`, not the
 legacy sample-split/image trainer. Provide separate training and validation NPZ
 files with the same `X`, `y`, `signer_id`, `sample_id` fields and reviewed manifests

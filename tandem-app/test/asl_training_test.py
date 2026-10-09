@@ -120,6 +120,18 @@ class TrainingTest(unittest.TestCase):
             self.assertEqual(loaded['y'].dtype.kind, 'U')
             self.assertEqual(loaded['signer_id'][0], 'train-1')
 
+    def test_training_reads_the_exact_bytes_whose_provenance_was_checked(self):
+        training, _ = self.fixture()
+        with tempfile.TemporaryDirectory() as directory:
+            path, manifest = self.write_partition(Path(directory), 'snapshot', training)
+            real_load = np.load
+            def replace_after_checksum(source, **options):
+                np.savez(path, **{**training, 'X': np.full((16, 73), 99, dtype=np.float32)})
+                return real_load(source, **options)
+            with patch('asl.train_reviewed.np.load', side_effect=replace_after_checksum):
+                loaded, _ = load_partition(path, manifest)
+            np.testing.assert_array_equal(loaded['X'], training['X'])
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -20,8 +20,8 @@ jobs:
           /tmp/tandem-asl-audit/bin/python -m pip_audit --strict --disable-pip --no-deps --progress-spinner off -r deploy/asl/requirements.lock
       - name: Build inference-only runtime without model artifacts
         run: docker build -f deploy/asl/Dockerfile -t tandem-asl:runtime-check .
-      - name: Verify signer-separated training with synthetic fixtures
-        run: docker run --rm --network none --read-only --tmpfs /tmp:size=32m -v "$PWD:/source:ro" --workdir /source tandem-asl:runtime-check python test/asl_training_test.py
+      - name: Verify collection export and training with synthetic fixtures
+        run: docker run --rm --network none --read-only --tmpfs /tmp:size=32m -v "$PWD:/source:ro" --workdir /source tandem-asl:runtime-check python -m unittest discover -s test -p 'asl_*test.py'
       - name: Build authenticated application runtime
         run: docker build -t tandem-app:asl-integration .
       - name: Verify isolated runtime with synthetic fixtures

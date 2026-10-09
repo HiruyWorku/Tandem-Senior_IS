@@ -5,6 +5,7 @@ This does not establish continuous ASL understanding or a production release.
 """
 import argparse
 import hashlib
+import io
 import json
 import math
 import pickle
@@ -96,11 +97,12 @@ def main():
     args = parser.parse_args()
     model_bytes = args.model.read_bytes()
     model_hash = hashlib.sha256(model_bytes).hexdigest()
-    dataset_hash = hashlib.sha256(args.benchmark.read_bytes()).hexdigest()
+    dataset_bytes = args.benchmark.read_bytes()
+    dataset_hash = hashlib.sha256(dataset_bytes).hexdigest()
     model_manifest = json.loads(args.model_manifest.read_text())
     benchmark_manifest = json.loads(args.benchmark_manifest.read_text())
     # Reject missing provenance or leaked signers BEFORE loading executable pickle.
-    with np.load(args.benchmark, allow_pickle=False) as data:
+    with np.load(io.BytesIO(dataset_bytes), allow_pickle=False) as data:
         X, truth, signers = validate_benchmark(data, model_manifest, benchmark_manifest, model_hash, dataset_hash)
     bundle = pickle.loads(model_bytes)
     if bundle.get('version') != 2:
