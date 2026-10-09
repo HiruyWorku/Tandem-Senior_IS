@@ -1,4 +1,16 @@
-# Resume on 2026-10-06
+# Resume checkpoint and engineering history
+
+## Latest checkpoint: 2026-10-09 01:53 UTC (October 8 locally)
+
+HTTP-bound source checkpoint 148837bc passed hosted workflow 37871013080: 117 Node, 46 Chrome, 92 Firefox/WebKit and 32 combined Python checks; both Python dependency audits and actual authenticated Node-to-inference integration passed. ASL fixtures are synthetic; no model quality claim follows.
+
+Released checksum-verified `/private/tmp/tandem-staging-source-20261008-http-bounds.tar.gz` (SHA256 `fefbdd306c196068da83337b63bc87c4753ac8b9f03fd8638a08c71ed2e36c77`). Guarded idle, production audit, actual configuration/startup, activation and readiness checks passed. Active image `tandem-staging-app:release-20261008-http-bounds`, started `2026-10-09T01:53:11.077708171Z`, zero restarts. Retained rollback `tandem-staging-app:rollback-6104ab13c8764abd81869af822a0fc73` contains the previous accessible-labels release. Live private invitation/WebSocket/typed reply/forced TLS relay and six HTTP/access/certificate checks passed. Protected metrics afterward: sockets/rooms/recognizers/provider jobs zero; new UTC-day allowance 3600 remaining, zero reserved. No paid transcription or capacity/hour probe repeated.
+
+[Continuous ASL decision](CONTINUOUS_ASL.md) records primary-source availability checks and selects offline sentence-level reference inference as the next functional milestone, separate from the letter classifier. No released SignGemma checkpoint/API was established. Author-linked SpaMo checkpoint page reports a disabled link; UPC's reference asset host returned 502 through the research browser, then failed DNS resolution through an approved direct metadata request. No model weights/videos downloaded or executed. Dataset noncommercial terms do not establish checkpoint deployment rights. Source/asset inspection and a reproducible small reference experiment are next; do not create GPU resources or treat published metrics as Tandem quality.
+
+Owner confirmed they can arrange fluent Deaf ASL reviewers later. Save a focused meaning-preservation evaluation batch for that milestone; do not request immediate review or remove it from the release gates. Physical call checklist remains pending. Hourly health scheduling still lacks observed scheduled-run evidence; the successful live six-check probe is not alert delivery verification.
+
+## Historical starting checkpoint: 2026-10-06
 
 Owner requested an overnight pause after Google live-caption validation and asked for all project changes to be pushed to GitHub.
 
