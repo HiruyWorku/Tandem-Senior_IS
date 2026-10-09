@@ -112,6 +112,10 @@ docs/_build/
 *.pkl
 *.npz
 *.task
+*.pth
+*.pt
+*.safetensors
+*.onnx
 model.json
 data.pickle
 # Standard reviewed-session outputs contain private participant records.

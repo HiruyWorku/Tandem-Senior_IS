@@ -1,6 +1,14 @@
 # Resume checkpoint and engineering history
 
-## Latest checkpoint: 2026-10-09 01:53 UTC (October 8 locally)
+## Latest research checkpoint: October 8 locally
+
+Uni-Sign author-released ASL weights are accessible and now the first executable research candidate. Downloaded only `how2sign_pose_only_slt.pth`, weight revision `64a2e24003b6e6bdbafca4f24c5f387921cdc6f0`, to `/private/tmp/tandem-unisign-how2sign.pth`; exact size 1,186,925,007 and published SHA256 `1bfd5f3312f04e4736f0a52f4ef9535916e6de9676a2a0d00c708748683fb00d` match. Author source revision is `eed438bcb49e30405cd6ccdfcccca330c134e830`. Model card specifies CC BY-NC 4.0; research compatibility does not approve production/commercial use.
+
+Static zip/pickletools inspection executed no pickle. Built retained local `tandem-unisign:cpu-probe` using the existing inference-check image plus CPU-only PyTorch 2.14.1. Its additional dependencies are experimental/unlocked/unaudited, outside app and CI. Actual weights-only mmap loading passed twice in a non-root/read-only/network-none container limited to 4 GiB/two CPUs/64 PIDs and two read-only file mounts. Saved `asl/research/unisign_probe.py` repeats exact checksum-before-load verification, reports aggregate shapes/types/timing, omits paths/content in failure output, and refuses wrong-size input before importing torch. Actual saved probe: 627 entries (583 BF16/44 int64), embedding [250112,768], pose projection [768,1024], 0.045-second mmap load and 234516 KiB peak RSS. These are lazy loading figures, not full model memory or inference latency. No author architecture code, tokenizer, video/poses or translation ran. Model binary formats are now ignored by Git.
+
+Next functional step: construct isolated CPU architecture/tokenizer and perform bounded synthetic generation, then a licensed real clip. Original demo assumes CUDA and defaults its dataset to CSL_Daily: ASL must explicitly select How2Sign. Preserve original 133-point pose schema/preprocessing; no substitute of letter landmarks. Reviewer arrangement remains later as confirmed by owner. No cloud resources or paid provider usage added; no containers/processes remain from these probes. Staging remains the HTTP-bounds image below.
+
+## Staging checkpoint: 2026-10-09 01:53 UTC (October 8 locally)
 
 HTTP-bound source checkpoint 148837bc passed hosted workflow 37871013080: 117 Node, 46 Chrome, 92 Firefox/WebKit and 32 combined Python checks; both Python dependency audits and actual authenticated Node-to-inference integration passed. ASL fixtures are synthetic; no model quality claim follows.
 
