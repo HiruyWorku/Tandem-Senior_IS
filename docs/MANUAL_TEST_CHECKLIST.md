@@ -60,3 +60,22 @@ Pause captions or leave after testing to stop paid recognition. Two active micro
   cleanup after an empty capture. See `tandem-app/asl/COLLECTION.md`. Do not paste
   private records here. This is a collection-tool check, not recognition accuracy
   or a request to collect a training dataset during the call tests.
+
+## Later fluent ASL translation review (not part of the call batch)
+
+Owner confirmed they can arrange fluent Deaf ASL reviewers later. Wait until a
+real-input research candidate and private review materials are ready.
+
+- [ ] M17: Agree the supported translation task and acceptance criteria with
+  reviewers before scoring. Use consented clips from signers absent from model
+  training where identities/provenance can establish that separation. Review
+  signed meaning and generated English independently, including questions,
+  negation, names/numbers, movement and facial grammar. Record omitted,
+  substituted and invented meanings, as well as whether a draft is useful and
+  understandable. Include no signing, occlusion, unfamiliar signs, lighting and
+  phone framing. Compare capture-to-draft delay and the effort needed to correct
+  errors. Keep clips, reference translations, generated text and identifying
+  reviewer records outside Git; store only approved aggregate findings here.
+  A useful fingerspelling result, fluent English or a synthetic model run does
+  not satisfy this review. Current Uni-Sign research also needs deployment
+  rights resolved before it could become a production candidate.

@@ -1,0 +1,7 @@
+FROM tandem-unisign:cpu-probe
+USER 0
+RUN python -m pip install --disable-pip-version-check --no-cache-dir --only-binary=:all: transformers==5.19.0 sentencepiece==0.2.1 einops==0.8.1
+RUN python -m pip install --disable-pip-version-check --no-cache-dir --only-binary=:all: protobuf==7.36.2
+USER 10001:10001
+ENV HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 TOKENIZERS_PARALLELISM=false
+ENTRYPOINT ["python"]
