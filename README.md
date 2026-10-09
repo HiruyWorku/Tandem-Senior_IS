@@ -24,6 +24,7 @@ Open http://localhost:3000 and share the full private invitation link with a sec
 - [Release evidence](docs/RELEASE_EVIDENCE.md): verified results, their limits, and the remaining full-project gates.
 - [Cumulative testing checklist](docs/MANUAL_TEST_CHECKLIST.md): owner checks saved for a later testing batch, with completed results recorded.
 - [Product context](PRODUCT.md): audience, product limitations, and current UI scope.
+- [Continuous ASL direction](docs/CONTINUOUS_ASL.md): video translation candidates, availability findings, and the next implementation gates.
 
 The application is not yet production ready. Google Cloud staging has passed HTTPS, private admission, typed replies, forced TURN delivery, restart and real Google caption checks. A hosted synthetic call kept displayed video and typed replies moving for 3644 seconds, beyond its original relay credential expiry. The owner confirmed phone/laptop connectivity across Wi-Fi and cellular and captions using Chrome on Mac with Safari on phone. Real-user caption accuracy, physical long calls, supported-browser/accessibility coverage and Deaf-user evaluation remain outstanding. See the [resume checkpoint](docs/RESUME.md) for current deployment and verification status.
 
