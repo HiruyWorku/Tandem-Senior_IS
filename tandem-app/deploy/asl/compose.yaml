@@ -1,0 +1,31 @@
+name: tandem-asl-local
+services:
+  asl:
+    image: tandem-asl:local
+    build:
+      context: ../..
+      dockerfile: deploy/asl/Dockerfile
+    init: true
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: '1.0'
+    mem_limit: 384m
+    pids_limit: 64
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    volumes:
+      - type: bind
+        source: ${ASL_MODEL_DIRECTORY:?Set a trusted local model directory}
+        target: /models
+        read_only: true
+    # Private network only; the authenticated Node service must join it.
+    networks: [inference]
+    logging:
+      driver: json-file
+      options:
+        max-size: 5m
+        max-file: '2'
+networks:
+  inference:
+    internal: true

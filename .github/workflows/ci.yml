@@ -5,6 +5,18 @@ on:
 permissions:
   contents: read
 jobs:
+  asl-runtime:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: tandem-app
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build inference-only runtime without model artifacts
+        run: docker build -f deploy/asl/Dockerfile -t tandem-asl:runtime-check .
+      - name: Verify isolated runtime with synthetic fixtures
+        run: python3 deploy/asl/smoke.py
   asl-contract:
     runs-on: ubuntu-24.04
     timeout-minutes: 5

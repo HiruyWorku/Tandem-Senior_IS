@@ -1,5 +1,6 @@
 """Exercise the real Flask boundary with deterministic models, no artifacts/providers."""
 import sys
+import os
 import pickle
 import tempfile
 import unittest
@@ -110,13 +111,25 @@ class ApiTest(unittest.TestCase):
             legacy = Model(); legacy.n_features_in_ = 84
             legacy.classes_ = np.array(['A', 'B'])
             (root / 'asl' / 'model.p').write_bytes(pickle.dumps({'model': legacy}))
-            with patch('server.asl_api.ROOT', root):
+            with patch('server.asl_api.ROOT', root), patch.dict(os.environ):
+                os.environ.pop('ASL_MODEL_DIR', None)
                 self.assertEqual(load_model()['version'], 1)
                 (root / 'asl' / 'model_v2.p').write_bytes(pickle.dumps({'model': Model(), 'classes': ['A', 'B']}))
                 self.assertEqual(load_model()['version'], 2)
                 response = create_app().test_client().post('/predict', json={'landmarks': [0] * 63})
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.json['model_version'], 2)
+
+    def test_configured_directory_is_required_and_does_not_fall_back(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with patch.dict(os.environ, {'ASL_MODEL_DIR': directory}):
+                with self.assertRaises(FileNotFoundError):
+                    load_model()
+                Path(directory, 'model_v2.p').write_bytes(pickle.dumps({'model': Model()}))
+                self.assertEqual(load_model()['version'], 2)
+            with patch.dict(os.environ, {'ASL_MODEL_DIR': ' '}):
+                with self.assertRaises(ValueError):
+                    load_model()
 
 
 if __name__ == '__main__':

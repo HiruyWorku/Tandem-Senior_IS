@@ -1,0 +1,11 @@
+**
+!deploy/
+!deploy/asl/
+!deploy/asl/requirements.lock
+!deploy/asl/gunicorn.conf.py
+!server/
+!server/asl_api.py
+!server/asl_wsgi.py
+!asl/
+!asl/__init__.py
+!asl/features.py

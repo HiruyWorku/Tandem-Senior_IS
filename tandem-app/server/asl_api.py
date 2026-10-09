@@ -21,8 +21,12 @@ log = logging.getLogger('asl_api')
 
 
 def load_model():
+    configured = os.environ.get('ASL_MODEL_DIR')
+    if configured is not None and not configured.strip():
+        raise ValueError('Configured model directory is empty.')
+    directory = Path(configured) if configured is not None else ROOT / 'asl'
     for version, filename in [(2, 'model_v2.p'), (1, 'model.p')]:
-        path = ROOT / 'asl' / filename
+        path = directory / filename
         if path.is_file():
             # Pickle can execute code; artifacts are trusted deployment inputs,
             # never request uploads or automatic remote downloads.
