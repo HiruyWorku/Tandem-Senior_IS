@@ -17,6 +17,13 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
   let draining = false;
   const access = createAccess(env);
   const maxPredictionRequests = positiveInteger(env.MAX_PREDICTION_REQUESTS, 2, 1, 20);
+  const maxConnections = positiveInteger(env.MAX_CONNECTIONS, 100, 2, 10000);
+  // Leave room for polling GET/POST pairs and HTTP control requests at capacity.
+  const maxHttpConnections = positiveInteger(env.MAX_HTTP_CONNECTIONS, 2 * maxConnections + 32,
+    2 * maxConnections + 8, 30000);
+  const headerTimeoutMs = positiveInteger(env.HTTP_HEADER_TIMEOUT_SECONDS, 10, 2, 60) * 1000;
+  const requestTimeoutMs = positiveInteger(env.HTTP_REQUEST_TIMEOUT_SECONDS, 30,
+    headerTimeoutMs / 1000, 120) * 1000;
   const iceConfig = createIceConfig(env);
   const speechEnabled = env.ENABLE_SPEECH === 'true' ||
     (env.ENABLE_SPEECH !== 'false' && Boolean(env.GOOGLE_APPLICATION_CREDENTIALS));
@@ -30,14 +37,15 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
   };
   const app = express();
   app.set('trust proxy', positiveInteger(env.TRUST_PROXY_HOPS, 0, 0, 5));
-  const server = http.createServer(app);
+  const server = http.createServer({ headersTimeout: headerTimeoutMs, requestTimeout: requestTimeoutMs,
+    keepAliveTimeout: 5000, connectionsCheckingInterval: 1000 }, app);
+  server.maxConnections = maxHttpConnections;
   const transports = new Set();
   server.on('connection', transport => {
     transports.add(transport);
     transport.once('close', () => transports.delete(transport));
   });
   let shutdown;
-  const maxConnections = positiveInteger(env.MAX_CONNECTIONS, 100, 2, 10000);
   const unjoinedTimeoutMs = positiveInteger(env.UNJOINED_TIMEOUT_SECONDS, 30, 5, 300) * 1000;
   const connectionRate = createRateLimit({ limit: positiveInteger(env.MAX_HANDSHAKES_PER_MINUTE, 60, 1, 1000), interval: 60000 });
   const io = new Server(server, {

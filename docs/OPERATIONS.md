@@ -12,6 +12,23 @@ Private Socket.IO connections supply the invitation in `auth.token`, not the URL
 
 MAX_CONNECTIONS bounds admitted Socket.IO clients (default 100; staging 20), including middleware reservations during concurrent connection attempts. Each room still admits at most two people. Initial transport handshakes are also rejected when existing transport count reaches capacity; simultaneous handshakes can temporarily exceed that preliminary check, but namespace reservations remain bounded. UNJOINED_TIMEOUT_SECONDS (default/staging 30; range 5–300) closes connections without a call room, including abandoned raw polling transports. Active callers waiting alone in their room remain connected. After leaving a room, an otherwise idle connection closes within one check interval. These bounds protect application resources; they do not replace per-client edge limits or denial-of-service protection.
 
+The source candidate also bounds total upstream TCP transports using
+`MAX_HTTP_CONNECTIONS` (default `2 * MAX_CONNECTIONS + 32`, minimum
+`2 * MAX_CONNECTIONS + 8`, maximum 30000). This includes upgraded WebSockets,
+polling GET/POST and ordinary HTTP, with headroom for control requests. Full
+capacity closes excess transports; it does not evict admitted calls. Initial
+connections sending no bytes close after `HTTP_HEADER_TIMEOUT_SECONDS`
+(default 10, range 2–60). Incomplete headers/body use that header deadline and
+`HTTP_REQUEST_TIMEOUT_SECONDS` (default 30, range header deadline–120), checked
+each second. HTTP keep-alive after completed responses is five seconds. These
+receiving deadlines do not limit upgraded call duration or provider response
+processing. Real local pressure/expiry checks preserve admitted WebSocket text
+delivery; public proxy/physical load still needs validation. This candidate has
+not yet been deployed to staging.
+Optional transport overrides for staging belong in its private `runtime.env`;
+Compose currently fixes `MAX_CONNECTIONS=20`, so the derived default transport
+cap is 72. Candidate startup validates the relationship and timeout ranges.
+
 ## Health and metrics
 
 - `/health`: process liveness, HTTP 200. It does not check paid providers.
