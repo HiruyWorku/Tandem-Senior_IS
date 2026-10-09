@@ -14,7 +14,7 @@ def docker(*args, check=True):
                           text=True, timeout=45)
 
 
-def main(image):
+def main(image, app_image=None):
     prefix = 'tandem-asl-check-' + uuid.uuid4().hex[:12]
     network = prefix + '-net'
     containers = []
@@ -34,7 +34,8 @@ pathlib.Path('/out/valid/model_v2.p').write_bytes(pickle.dumps(bundle))
 sklearn.base.__version__ = '0.0.0'
 pathlib.Path('/out/mismatch/model_v2.p').write_bytes(pickle.dumps(bundle))
 """
-            docker('run', '--rm', '--network', 'none', '--user', '0:0',
+            containers.append(prefix + '-fixture')
+            docker('run', '--name', containers[-1], '--network', 'none', '--user', '0:0',
                    '-v', directory + ':/out', image, 'python', '-c', fixture)
             phase = 'compose'
             env = {**os.environ, 'ASL_MODEL_DIRECTORY': str(root / 'valid')}
@@ -100,11 +101,21 @@ for body, expected in [(json.dumps({'landmarks': [0]*63}).encode(), 200),
                         if expected == 200:
                             assert result == {'prediction': 'A', 'confidence': 1.0, 'model_version': 2}
 '''.replace('HOST', name)
-                docker('run', '--rm', *restrictions, image, 'python', '-c', client)
+                containers.append(prefix + '-client')
+                docker('run', '--name', containers[-1], *restrictions, image, 'python', '-c', client)
+                if app_image:
+                    phase = 'authenticated-app'
+                    containers.append(prefix + '-app')
+                    code = Path(__file__).with_name('integration.cjs').read_text()
+                    docker('run', '--name', containers[-1], *restrictions,
+                           '-e', 'ASL_TEST_URL=http://' + name + ':5003/predict',
+                           app_image, 'node', '-e', code)
                 phase = 'shutdown'
                 docker('stop', '--time', '10', name)
                 assert json.loads(docker('inspect', name).stdout)[0]['State']['ExitCode'] == 0
         print('ASL runtime passed: isolated startup, missing/mismatched artifact rejection, HTTP bounds, graceful stop.')
+        if app_image:
+            print('Authenticated Node-to-inference HTTP integration passed with synthetic invitations and model.')
     except Exception:
         print('ASL runtime failed at phase: ' + phase, file=sys.stderr)
         return 1
@@ -127,4 +138,5 @@ for body, expected in [(json.dumps({'landmarks': [0]*63}).encode(), 200),
 
 
 if __name__ == '__main__':
-    sys.exit(main(sys.argv[1] if len(sys.argv) == 2 else 'tandem-asl:runtime-check'))
+    sys.exit(main(sys.argv[1] if len(sys.argv) >= 2 else 'tandem-asl:runtime-check',
+                  sys.argv[2] if len(sys.argv) >= 3 else None))

@@ -8,7 +8,8 @@ From `tandem-app`:
 
 ```sh
 docker build -f deploy/asl/Dockerfile -t tandem-asl:runtime-check .
-python3 deploy/asl/smoke.py
+docker build -t tandem-app:asl-integration .
+python3 deploy/asl/smoke.py tandem-asl:runtime-check tandem-app:asl-integration
 ```
 
 The smoke creates its own synthetic sklearn model inside the runtime image,
@@ -16,7 +17,9 @@ rejects missing and cross-version models before serving, makes actual HTTP
 requests from a second container, checks bounded input/private response headers,
 and verifies graceful shutdown. It removes its own containers/network and never
 uses cloud providers or the existing trained model. These are runtime contracts,
-not accuracy measurements.
+not accuracy measurements. With the second image argument it also exercises the
+real production Node boundary: missing/invalid invitations are rejected, valid
+invitations reach Python and only the reviewed prediction contract returns.
 
 For a trusted operator-owned model directory, set `ASL_MODEL_DIRECTORY` and run
 `docker compose -f deploy/asl/compose.yaml up --build`. The service has no published
@@ -36,6 +39,8 @@ one CPU, 384 MiB RAM, 64 processes and a bounded temporary filesystem.
 
 Before enabling recognition, complete the provenance and signer-disjoint quality
 evaluation in `asl/EVALUATION.md`, agree acceptance/abstention and latency targets,
-and validate the actual Node-to-service deployment. The dependency lock is not a
-vulnerability audit; deployment must also review current package/base-image
-advisories. Do not expose port 5003 to the public internet.
+and validate the actual deployment environment. CI audits the full inference lock
+using pip-audit against current PyPI advisories before building. This covers known
+Python package advisories, not unknown issues or base-image OS packages. Recheck
+base-image advisories before deployment. Do not expose port 5003 to the public
+internet.
