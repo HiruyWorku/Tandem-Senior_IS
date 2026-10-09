@@ -13,11 +13,12 @@ jobs:
         working-directory: tandem-app
     steps:
       - uses: actions/checkout@v4
-      - name: Audit inference dependency lock against current advisories
+      - name: Audit inference and collection dependency locks against current advisories
         run: |
           python3 -m venv /tmp/tandem-asl-audit
           /tmp/tandem-asl-audit/bin/pip install --disable-pip-version-check pip-audit==2.10.1
           /tmp/tandem-asl-audit/bin/python -m pip_audit --strict --disable-pip --no-deps --progress-spinner off -r deploy/asl/requirements.lock
+          /tmp/tandem-asl-audit/bin/python -m pip_audit --strict --disable-pip --no-deps --progress-spinner off -r asl/requirements-collection.lock
       - name: Build inference-only runtime without model artifacts
         run: docker build -f deploy/asl/Dockerfile -t tandem-asl:runtime-check .
       - name: Verify collection export and training with synthetic fixtures

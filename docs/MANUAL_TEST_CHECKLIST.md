@@ -49,3 +49,14 @@ Since the 2026-10-08 release, choose **Start captions** on each microphone you w
 - Post-test streams, sockets and rooms returned to zero. Tests use synthetic media, not measured real-user accuracy.
 
 Pause captions or leave after testing to stop paid recognition. Two active microphones count as two audio streams. Experimental ASL/avatar remain disabled; do not interpret these checks as fluent ASL translation validation.
+
+## Separate local collection check (not part of the call batch)
+
+- [ ] M16: After agreeing local metadata/consent setup, verify the new collection
+  tool on physical hardware: denied camera, visible preview, Space saves one
+  selected label, N changes label, absent/two hands are refused, and Q/window
+  close releases the camera. Check camera interruption and short time/sample
+  limits. Verify private JSONL/manifest only, no image files or uploads, and
+  cleanup after an empty capture. See `tandem-app/asl/COLLECTION.md`. Do not paste
+  private records here. This is a collection-tool check, not recognition accuracy
+  or a request to collect a training dataset during the call tests.

@@ -3,7 +3,80 @@
 The legacy camera collector writes annotated images without signer/session
 records. Those images and the old X/y cache cannot substantiate unseen-signer
 results. This export path accepts new reviewed per-session landmark records;
-camera acquisition for this format is still to be implemented/verified.
+the new local collector implements acquisition for that format. Physical camera,
+permissions, window controls and positive hand detection remain manual gates.
+
+## Local camera capture
+
+Use a separate Python 3.12 environment on macOS arm64 or Linux amd64/arm64:
+
+```sh
+python3.12 -m venv /private/collection-env
+/private/collection-env/bin/python -m pip install --only-binary=:all: --require-hashes \
+  -r asl/requirements-collection.lock
+```
+
+Choose a writable private path for that environment and the commands below. Do
+not install these camera dependencies in the deployed inference image. The lock
+contains nineteen exact packages/wheel hashes, including MediaPipe 1.1.0 and
+OpenCV contrib 4.14.0.94. A fresh package-advisory scan reports no known issues;
+this does not cover OS or unknown vulnerabilities.
+
+Provide a trusted local HandLandmarker task asset and its independently checked
+SHA256. See the [official model and Python setup](https://developers.google.com/edge/mediapipe/solutions/vision/hand_landmarker/python).
+The collector never downloads a model. A Google version-1 asset used for native
+blank-frame verification had SHA256
+`fbc2a30080c3c557093b5ddfc334698132eb341044ccee322ccf8bcf3607cde1`;
+this records the tested bytes, not a promise that every future asset is identical.
+
+Create reviewed session metadata with `signer_id`, `session_id`, `source`,
+`license`, `consent_review`, `lighting`, `viewpoint` and `dominant_hand`
+(`left`, `right` or `ambidextrous`). Then, from `tandem-app`:
+
+```sh
+/private/collection-env/bin/python -m asl.capture_session \
+  --metadata /private/reviewed-session.json \
+  --landmarker-model /private/hand_landmarker.task \
+  --landmarker-sha256 VERIFIED_SHA256 --output /private/new-session \
+  --labels A B __unknown__
+```
+
+`npm run asl:collect -- ...` invokes the same collector using `python` from the
+active environment. It validates inputs before loading native packages or opening
+a camera. **Space** saves one explicitly labeled eligible sample, **N** changes
+label, and **Q/Escape** or closing the preview finishes. Nothing is automatically
+recorded. It refuses zero/multiple detected hands and invalid coordinates; at
+most two samples/second are saved. Preview annotations never enter detection.
+The detector considers up to two hands so it can refuse multi-hand frames rather
+than silently selecting one.
+
+`--camera` selects a local camera index. `--max-samples` defaults to 5000 and
+`--duration-seconds` to 900 (range 1–3600); time expiry is checked between camera
+frames. Normal stop, sample/time limit and camera interruption finalize existing
+samples with an explicit stop reason and release the camera/window. Empty captures
+leave no session directory. Exceptions abort unfinished files; a process/OS crash
+may leave `.part` files, which cannot be exported as a completed session. Retain
+or delete those under the agreed private-data policy, never fabricate a manifest.
+
+Only `session.jsonl` and `session.json` are saved, with mode 600 in a new mode-700
+directory. There are no saved images, audio, upload calls, labels guessed by a
+classifier or automatic training. The manifest records actual detector versions,
+asset hash and configuration. Keep the same signer identity across sessions.
+This Tasks detector and the existing browser landmark pipeline require comparison
+on real inputs before claiming matching perception quality.
+
+For a native compatibility check without opening a camera/window:
+
+```sh
+/private/collection-env/bin/python -m asl.native_capture_check \
+  --landmarker-model /private/hand_landmarker.task --landmarker-sha256 VERIFIED_SHA256
+```
+
+This passed on macOS arm64 with three blank frames using the actual pinned SDK,
+shared detector construction, RGB conversion and preview annotation API. It does
+not establish positive-hand accuracy, GUI behavior or camera permission handling.
+
+## Session export
 
 Before collecting, agree the task, labeling procedure, participant consent,
 license, retention and the training/validation/benchmark signer assignment.
@@ -71,5 +144,5 @@ loads pickle, contacts a provider or trains a model.
 Store inputs/outputs outside the repo in private storage. Restrict benchmark
 feature access until model/threshold selection is complete; pseudonyms still
 identify a participant within this dataset. Use [training and evaluation](EVALUATION.md)
-for the separate stages. Logs report aggregate counts only. Real collection,
+for the separate stages. Command summaries report aggregate counts only. Real collection,
 label correctness, coverage and fluent Deaf-user evaluation remain required.

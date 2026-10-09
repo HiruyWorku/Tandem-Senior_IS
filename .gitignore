@@ -111,8 +111,14 @@ docs/_build/
 *.pickle
 *.pkl
 *.npz
+*.task
 model.json
 data.pickle
+# Standard reviewed-session outputs contain private participant records.
+session.jsonl
+session.jsonl.part
+session.json
+session.json.part
 
 # ── Downloaded datasets ────────────────────────
 tandem-app/asl/kaggle_download/
