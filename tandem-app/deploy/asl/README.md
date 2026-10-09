@@ -27,6 +27,11 @@ host ports. Its private Docker network denies external routing. An authenticated
 Node container must deliberately join that network and use `http://asl:5003`;
 the Node container may retain its separate application network. This Compose file
 is a local validation tool, not a staging rollout or an automatic enablement.
+Node limits prediction requests to two in flight across callers by default;
+`MAX_PREDICTION_REQUESTS` accepts 1–20. Excess work returns HTTP 503 with
+`Retry-After: 1` rather than forming a queue. Its existing per-IP request rate and
+three-second complete-response deadline also apply. Choose capacity using actual
+model latency/load evidence before changing the default.
 
 Only mount reviewed local artifacts as read-only. Pickle can execute code:
 version checks do not make untrusted files safe. No model upload/download,

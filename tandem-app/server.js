@@ -16,6 +16,7 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
   const telemetry = createObservability({ env, logger });
   let draining = false;
   const access = createAccess(env);
+  const maxPredictionRequests = positiveInteger(env.MAX_PREDICTION_REQUESTS, 2, 1, 20);
   const iceConfig = createIceConfig(env);
   const speechEnabled = env.ENABLE_SPEECH === 'true' ||
     (env.ENABLE_SPEECH !== 'false' && Boolean(env.GOOGLE_APPLICATION_CREDENTIALS));
@@ -118,6 +119,7 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
   else app.all('/pose', (_req, res) => res.set('Cache-Control', 'no-store').status(503).json({ error: 'Signing avatar is disabled.' }));
 
   const predictRates = new Map();
+  let predictionRequests = 0;
   app.post('/api/predict', async (req, res) => {
     res.set('Cache-Control', 'no-store');
     if (!capabilities.recognition) return res.status(503).json({ error: 'Experimental recognition is disabled.' });
@@ -137,6 +139,10 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
       predictRates.set(ip, rate);
     }
     if (++rate.count > 20) return res.status(429).json({ error: 'Too many requests.' });
+    if (predictionRequests >= maxPredictionRequests) {
+      return res.status(503).set('Retry-After', '1').json({ error: 'Recognition is busy. You can still type a reply.' });
+    }
+    predictionRequests++;
     try {
       const { requestPrediction } = require('./server/predictionProxy');
       const data = await requestPrediction({ landmarks, url: env.ASL_API_URL || 'http://127.0.0.1:5003/predict', fetchPrediction });
@@ -144,6 +150,8 @@ function createApplication({ env = process.env, speech, interpretLetters, synthe
     } catch {
       telemetry.failure('recognition_provider_failed');
       res.status(503).json({ error: 'Recognition is unavailable. You can still type a reply.' });
+    } finally {
+      predictionRequests--;
     }
   });
   const instanceId = randomUUID();
