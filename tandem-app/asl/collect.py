@@ -2,6 +2,8 @@
 """
 ASL Data Collection — v2
 =========================
+Legacy image capture without signer/session/provenance records. It cannot
+produce reviewed training or benchmark partitions as-is; see EVALUATION.md.
 Collects 500 camera frames per sign class with real-time MediaPipe overlay
 so you can verify your hand is being tracked before samples are saved.
 
@@ -20,8 +22,8 @@ Output
 ------
     asl/data_v2/<label>/0001.jpg … 0500.jpg
 
-After collection, run:
-    python asl/train.py
+Before training, establish reviewed provenance and real signer/session identities.
+Do not invent missing identities or claim unseen-signer results from these images.
 """
 
 import os
@@ -178,7 +180,7 @@ def main():
     cap.release()
     cv2.destroyAllWindows()
     print(f'\nAll done. Data saved to: {DATA_DIR}')
-    print('Next step: python asl/train.py')
+    print('Legacy images need reviewed provenance and signer records before training; see asl/EVALUATION.md.')
 
 
 if __name__ == '__main__':

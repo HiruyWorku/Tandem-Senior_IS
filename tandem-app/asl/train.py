@@ -2,6 +2,9 @@
 """
 ASL Model Training — v2
 ========================
+Legacy unverified experiment. The supported training command is now
+`python -m asl.train_reviewed`; see EVALUATION.md for required partitions and
+provenance. This script is retained for historical reproduction only.
 Trains a 3-layer MLP on MediaPipe landmark features extracted by features.py.
 The sample-level cross-validation and hold-out results below do not establish
 unseen-signer accuracy: related signer/session images can appear on both sides
@@ -69,7 +72,7 @@ NPZ_PATH = os.path.join(os.path.dirname(__file__), 'dataset_v2.npz')
 
 def load_from_npz():
     """Load pre-extracted features saved by download_dataset.py (instant)."""
-    d = np.load(NPZ_PATH, allow_pickle=True)
+    d = np.load(NPZ_PATH, allow_pickle=False)
     X = d['X'].astype(np.float32)
     y = d['y'].astype(str)
     labels = sorted(np.unique(y).tolist())

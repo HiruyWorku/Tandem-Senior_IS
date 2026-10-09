@@ -57,3 +57,39 @@ inputs in the benchmark design. J/Z movement and contextual ASL require temporal
 evaluation; still-image letter predictions do not validate these tasks.
 Publish quality targets and review results with fluent Deaf ASL users before
 making a product claim or enabling the experiment for real users.
+
+## Training without signer leakage
+
+`npm run asl:train -- ...` now invokes `python -m asl.train_reviewed`, not the
+legacy sample-split/image trainer. Provide separate training and validation NPZ
+files with the same `X`, `y`, `signer_id`, `sample_id` fields and reviewed manifests
+described above. Training requires at least two signers and two known letters;
+validation requires a different signer, supported letters and unknown inputs.
+Signer and sample overlap, missing declarations, invalid arrays and mismatched
+hashes fail before fitting. Never use real names or email addresses as identities.
+
+```sh
+python -m asl.train_reviewed \
+  --training /private/training.npz --training-manifest /private/training.json \
+  --validation /private/validation.npz --validation-manifest /private/validation.json \
+  --threshold 0.8 --model-license 'Reviewed derived-model license' \
+  --model-consent-review 'Reference to reviewed consent/retention record' \
+  --output /private/new-candidate
+```
+
+Use the isolated pinned inference dependency environment for this offline command;
+it requires no camera tools or downloaded datasets. The output directory must not
+exist. It is created with mode 700, and `model_v2.p`, `model-provenance.json` and
+`validation-report.json` use mode 600. Keep it outside the repository. The model
+manifest includes partition hashes/declarations, pseudonymous signer sets and the
+sklearn version; these remain private. Rights for the derived model require an
+explicit operator declaration rather than inheriting a dataset license blindly.
+
+The deterministic, single-threaded random-forest baseline fits only training rows;
+validation never enters fitting or an internal random early-stopping split. The
+threshold is explicit and may be adjusted using validation results. Reserve the
+final signer-disjoint benchmark until the model/threshold are selected; this
+trainer does not accept a benchmark argument. It makes no superiority, calibrated
+confidence, continuous-ASL or production-quality claim. Synthetic CI checks prove
+the partition/artifact contracts, not that the model is useful. Existing unlabeled
+signer caches cannot be converted to reviewed partitions by inventing identities.

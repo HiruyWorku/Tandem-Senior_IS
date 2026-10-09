@@ -13,7 +13,7 @@
     "test:browser:compat": "playwright test --config playwright.compat.config.js",
     "asl:download": "python asl/download_dataset.py",
     "asl:collect": "python asl/collect.py",
-    "asl:train": "python asl/train.py",
+    "asl:train": "python -m asl.train_reviewed",
     "docker:build": "docker build -t tandem-app .",
     "docker:run": "docker run --rm -e NODE_ENV=development -p 3000:3000 tandem-app"
   },

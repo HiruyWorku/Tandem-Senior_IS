@@ -37,6 +37,7 @@ def validate_benchmark(data, model_manifest, benchmark_manifest, model_hash, dat
             not np.isfinite(X).all() or any(array.shape != (count,) or array.dtype.kind not in 'US'
                                           for array in [y, signers, samples])):
         raise ValueError('Invalid benchmark arrays.')
+    y, signers, samples = (array.astype(str) for array in [y, signers, samples])
     if (any(not str(value).strip() for value in signers) or
             any(not str(value).strip() for value in samples) or len(set(samples.tolist())) != count):
         raise ValueError('Benchmark identities must be nonempty and samples unique.')

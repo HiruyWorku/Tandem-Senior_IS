@@ -54,6 +54,14 @@ class EvaluationTest(unittest.TestCase):
             with self.assertRaises(ValueError):
                 validate_benchmark(invalid, model, manifest, 'fixture-hash', 'fixture-hash')
 
+    def test_npz_byte_strings_normalize_before_identity_and_label_checks(self):
+        data, model, manifest = self.fixture()
+        for key in ['y', 'signer_id', 'sample_id']:
+            data[key] = data[key].astype('S')
+        _, labels, signers = validate_benchmark(data, model, manifest, 'fixture-hash', 'fixture-hash')
+        self.assertEqual(labels.tolist(), ['A', 'B', UNKNOWN, UNKNOWN])
+        self.assertEqual(signers[0], 'new-1')
+
     def test_wrong_acceptance_and_abstention_are_distinct(self):
         data, _, _ = self.fixture()
         report = score_predictions([[.9, .1], [.7, .3], [.95, .05], [.5, .5]],
